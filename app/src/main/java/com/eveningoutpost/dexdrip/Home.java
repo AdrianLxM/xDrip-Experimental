@@ -174,6 +174,14 @@ public class Home extends ActivityWithMenu {
     }
 
     public void updateCurrentBgInfo() {
+        BgReading last = BgReading.last();
+        if (last != null) {
+            long timediff = (System.currentTimeMillis() - last.timestamp) % (5 * 60 * 1000);
+            if (timediff <= 4.6 * 60 * 1000) {
+                CollectionServiceStarter.restartCollectionService(this);
+            }
+        }
+
         final TextView notificationText = (TextView) findViewById(R.id.notices);
         notificationText.setText("");
         notificationText.setTextColor(Color.RED);
