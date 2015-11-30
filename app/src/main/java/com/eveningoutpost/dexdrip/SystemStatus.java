@@ -11,7 +11,6 @@ import android.graphics.Point;
 import android.os.Bundle;
 import android.os.Handler;
 import android.preference.PreferenceManager;
-import android.util.Log;
 import android.view.Display;
 import android.view.View;
 import android.widget.Button;
@@ -19,7 +18,12 @@ import android.widget.ImageButton;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
+import com.eveningoutpost.dexdrip.ImportedLibraries.dexcom.Constants;
 import com.eveningoutpost.dexdrip.Models.ActiveBluetoothDevice;
+import com.eveningoutpost.dexdrip.Models.BgReading;
+import com.eveningoutpost.dexdrip.Models.Calibration;
+import com.eveningoutpost.dexdrip.Models.TransmitterData;
+import com.eveningoutpost.dexdrip.Models.UserError.Log;
 import com.eveningoutpost.dexdrip.UtilityModels.CollectionServiceStarter;
 import com.eveningoutpost.dexdrip.utils.ActivityWithMenu;
 
@@ -27,6 +31,7 @@ import java.lang.reflect.Method;
 import java.text.DateFormat;
 import java.text.SimpleDateFormat;
 import java.util.Date;
+import java.util.List;
 
 
 public class SystemStatus extends ActivityWithMenu {
@@ -37,9 +42,11 @@ public class SystemStatus extends ActivityWithMenu {
     private TextView current_device;
     private TextView connection_status;
     private TextView sensor_status_view;
+    private TextView transmitter_status_view;
     private TextView notes;
     private Button restart_collection_service;
     private Button forget_device;
+    private Button futureDataDeleteButton;
     private ImageButton refresh;
     private SharedPreferences prefs;
     private BluetoothManager mBluetoothManager;
@@ -50,10 +57,11 @@ public class SystemStatus extends ActivityWithMenu {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_system_status);
         prefs = PreferenceManager.getDefaultSharedPreferences(getApplicationContext());
-       version_name_view = (TextView)findViewById(R.id.version_name);
+        version_name_view = (TextView)findViewById(R.id.version_name);
         collection_method = (TextView)findViewById(R.id.collection_method);
         connection_status = (TextView)findViewById(R.id.connection_status);
         sensor_status_view = (TextView)findViewById(R.id.sensor_status);
+        transmitter_status_view = (TextView)findViewById(R.id.transmitter_status);
         current_device = (TextView)findViewById(R.id.remembered_device);
 
         notes = (TextView)findViewById(R.id.other_notes);
@@ -61,6 +69,7 @@ public class SystemStatus extends ActivityWithMenu {
         restart_collection_service = (Button)findViewById(R.id.restart_collection_service);
         forget_device = (Button)findViewById(R.id.forget_device);
         refresh = (ImageButton)findViewById(R.id.refresh_current_values);
+        futureDataDeleteButton = (Button)findViewById(R.id.delete_future_data);
 
         //check for small devices:
         Display display = getWindowManager().getDefaultDisplay();
@@ -78,6 +87,8 @@ public class SystemStatus extends ActivityWithMenu {
             layout = (LinearLayout)findViewById(R.id.layout_device);
             layout.setOrientation(LinearLayout.VERTICAL);
             layout = (LinearLayout)findViewById(R.id.layout_sensor);
+            layout.setOrientation(LinearLayout.VERTICAL);
+            layout = (LinearLayout)findViewById(R.id.layout_transmitter);
             layout.setOrientation(LinearLayout.VERTICAL);
         }
 
@@ -100,7 +111,37 @@ public class SystemStatus extends ActivityWithMenu {
         setCurrentDevice();
         setConnectionStatus();
         setSensorStatus();
+        setTransmitterStatus();
         setNotes();
+        futureDataCheck();
+    }
+
+    private void setTransmitterStatus() {
+
+        if(prefs.getString("dex_collection_method", "BluetoothWixel").equals("DexcomShare")){
+            transmitter_status_view.setText("See Share Receiver");
+            return;
+        }
+
+        TransmitterData td = TransmitterData.last();
+
+        if (td== null || td.sensor_battery_level == 0){
+            transmitter_status_view.setText("not available");
+        } else if((System.currentTimeMillis() - td.timestamp) > 1000*60*60*24){
+            transmitter_status_view.setText("no data in 24 hours");
+        } else {
+            transmitter_status_view.setText("" + td.sensor_battery_level);
+
+            if (td.sensor_battery_level <= Constants.TRANSMITTER_BATTERY_EMPTY) {
+                transmitter_status_view.append(" - very low");
+            } else if (td.sensor_battery_level <= Constants.TRANSMITTER_BATTERY_LOW) {
+                transmitter_status_view.append(" - low");
+                transmitter_status_view.append("\n(experimental interpretation)");
+            } else {
+                transmitter_status_view.append(" - ok");
+            }
+        }
+
     }
 
 
@@ -112,9 +153,9 @@ public class SystemStatus extends ActivityWithMenu {
             DateFormat df = new SimpleDateFormat();
             sensor_status.append(df.format(date));
             sensor_status.append(" (");
-            sensor_status.append((int) (System.currentTimeMillis() - sens.started_at) / (1000 * 60 * 60 * 24));
+            sensor_status.append((System.currentTimeMillis() - sens.started_at) / (1000 * 60 * 60 * 24));
             sensor_status.append("d ");
-            sensor_status.append((int)((System.currentTimeMillis() - sens.started_at)%(1000 * 60 * 60 * 24))/(1000*60*60));
+            sensor_status.append(((System.currentTimeMillis() - sens.started_at)%(1000 * 60 * 60 * 24))/(1000*60*60));
             sensor_status.append("h)");
         } else {
             sensor_status.append("not available");
@@ -136,7 +177,7 @@ public class SystemStatus extends ActivityWithMenu {
     }
 
     private void setCollectionMethod() {
-        collection_method.setText(prefs.getString("dex_collection_method", "BluetoothWixel"));
+        collection_method.setText(prefs.getString("dex_collection_method", "BluetoothWixel").replace("Dexbridge", "xBridge"));
     }
 
     public void setCurrentDevice() {
@@ -175,6 +216,36 @@ public class SystemStatus extends ActivityWithMenu {
                 }
             }
         }
+    }
+
+    private void futureDataCheck() {
+        futureDataDeleteButton.setVisibility(View.GONE);
+        final List<BgReading> futureReadings = BgReading.futureReadings();
+        final List<Calibration> futureCalibrations = Calibration.futureCalibrations();
+        if((futureReadings != null && futureReadings.size() > 0) || (futureCalibrations != null && futureCalibrations.size() > 0)) {
+            notes.append("\n- Your device has future data on it, Please double check the time and timezone on this phone.");
+            futureDataDeleteButton.setVisibility(View.VISIBLE);
+        }
+        futureDataDeleteButton.setOnClickListener(new View.OnClickListener() {
+            public void onClick(View v) {
+                if(futureReadings != null && futureReadings.size() > 0) {
+                    for (BgReading bgReading : futureReadings) {
+                        bgReading.calculated_value = 0;
+                        bgReading.raw_data = 0;
+                        bgReading.timestamp = 0;
+                        bgReading.save();
+                    }
+                }
+                if(futureCalibrations != null && futureCalibrations.size() > 0) {
+                    for (Calibration calibration : futureCalibrations) {
+                        calibration.slope_confidence = 0;
+                        calibration.sensor_confidence = 0;
+                        calibration.timestamp = 0;
+                        calibration.save();
+                    }
+                }
+            }
+        });
     }
 
     private void restartButtonListener() {
