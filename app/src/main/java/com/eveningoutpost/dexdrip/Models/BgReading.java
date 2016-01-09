@@ -253,7 +253,7 @@ public class BgReading extends Model implements ShareUploadableBg{
             bgReading.find_new_curve();
             bgReading.find_new_raw_curve();
             context.startService(new Intent(context, Notifications.class));
-            BgSendQueue.addToQueue(bgReading, "create", context);
+            BgSendQueue.handleNewBgReading(bgReading, "create", context);
         }
     }
 
@@ -363,7 +363,7 @@ public class BgReading extends Model implements ShareUploadableBg{
             bgReading.save();
             bgReading.perform_calculations();
             context.startService(new Intent(context, Notifications.class));
-            BgSendQueue.addToQueue(bgReading, "create", context);
+            BgSendQueue.handleNewBgReading(bgReading, "create", context);
         }
 
         Log.i("BG GSON: ",bgReading.toS());
@@ -506,12 +506,10 @@ public class BgReading extends Model implements ShareUploadableBg{
                 .execute();
     }
 
-    public static List<BgReading> latestForGraph(int number, double startTime) {
-        DecimalFormat df = new DecimalFormat("#");
-        df.setMaximumFractionDigits(1);
+    public static List<BgReading> latestForGraph(int number, long startTime) {
         return new Select()
                 .from(BgReading.class)
-                .where("timestamp >= " + df.format(startTime))
+                .where("timestamp >= " + Math.max(startTime, 0))
                 .where("calculated_value != 0")
                 .where("raw_data != 0")
                 .orderBy("timestamp desc")

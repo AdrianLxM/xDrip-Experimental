@@ -38,7 +38,7 @@ public class Calibration extends Model {
 
     @Expose
     @Column(name = "timestamp", index = true)
-    public double timestamp;
+    public long timestamp;
 
     @Expose
     @Column(name = "sensor_age_at_time_of_estimation")
@@ -73,7 +73,7 @@ public class Calibration extends Model {
 
     @Expose
     @Column(name = "raw_timestamp")
-    public double raw_timestamp;
+    public long raw_timestamp;
 
     @Expose
     @Column(name = "slope")
@@ -255,6 +255,7 @@ public class Calibration extends Model {
                     Calibration calibration = new Calibration();
                     calibration.bg = calSubrecord.getCalBGL();
                     calibration.timestamp = calSubrecord.getDateEntered().getTime() + addativeOffset;
+                    calibration.raw_timestamp = calibration.timestamp;
                     if (calibration.timestamp > new Date().getTime()) {
                         Log.d(TAG, "ERROR - Calibration timestamp is from the future, wont save!");
                         return;
@@ -366,7 +367,7 @@ public class Calibration extends Model {
                 bgReading.calibration = calibration;
                 bgReading.calibration_flag = true;
                 bgReading.save();
-                BgSendQueue.addToQueue(bgReading, "update", context);
+                BgSendQueue.handleNewBgReading(bgReading, "update", context);
 
                 calculate_w_l_s();
                 adjustRecentBgReadings();
@@ -393,7 +394,7 @@ public class Calibration extends Model {
                 .execute();
     }
 
-    public static void calculate_w_l_s() {
+    private static void calculate_w_l_s() {
         if (Sensor.isActive()) {
             double l = 0;
             double m = 0;
@@ -402,11 +403,12 @@ public class Calibration extends Model {
             double q = 0;
             double w;
             List<Calibration> calibrations = allForSensorInLastFourDays(); //5 days was a bit much, dropped this to 4
-            if (calibrations.size() == 1) {
+            if (calibrations.size() <= 1) {
                 Calibration calibration = Calibration.last();
                 calibration.slope = 1;
                 calibration.intercept = calibration.bg - (calibration.raw_value * calibration.slope);
                 calibration.save();
+                CalibrationRequest.createOffset(calibration.bg, 25);
             } else {
                 for (Calibration calibration : calibrations) {
                     w = calibration.calculateWeight();
@@ -635,12 +637,10 @@ public class Calibration extends Model {
                 .execute();
     }
 
-    public static List<Calibration> latestForGraph(int number, double startTime) {
-        DecimalFormat df = new DecimalFormat("#");
-        df.setMaximumFractionDigits(1);
+    public static List<Calibration> latestForGraph(int number, long startTime) {
         return new Select()
                 .from(Calibration.class)
-                .where("timestamp >= " + df.format(startTime))
+                .where("timestamp >= " + Math.max(startTime, 0))
                 .orderBy("timestamp desc")
                 .limit(number)
                 .execute();

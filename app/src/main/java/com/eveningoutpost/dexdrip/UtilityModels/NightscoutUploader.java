@@ -61,7 +61,9 @@ public class NightscoutUploader {
         private SharedPreferences prefs;
         private OkHttpClient client;
 
-        public interface NightscoutService {
+
+
+    public interface NightscoutService {
             @POST("entries")
             Call<ResponseBody> upload(@Header("api-secret") String secret, @Body RequestBody body);
 
@@ -96,27 +98,27 @@ public class NightscoutUploader {
             enableMongoUpload = prefs.getBoolean("cloud_storage_mongodb_enable", false);
         }
 
-        public boolean upload(List<BgReading> glucoseDataSets, List<Calibration> meterRecords, List<Calibration> calRecords) {
+        public boolean upload(List<BgReading> glucoseDataSets, List<Calibration> meterRecords, List<Calibration> calRecords, boolean xDripViewerMode) {
             boolean mongoStatus = false;
             boolean apiStatus = false;
 
             if (enableRESTUpload) {
                 long start = System.currentTimeMillis();
                 Log.i(TAG, String.format("Starting upload of %s record using a REST API", glucoseDataSets.size()));
-                apiStatus = doRESTUpload(prefs, glucoseDataSets, meterRecords, calRecords);
+                apiStatus = doRESTUpload(prefs, glucoseDataSets, meterRecords, calRecords, xDripViewerMode);
                 Log.i(TAG, String.format("Finished upload of %s record using a REST API in %s ms", glucoseDataSets.size(), System.currentTimeMillis() - start));
             }
 
             if (enableMongoUpload) {
                 double start = new Date().getTime();
-                mongoStatus = doMongoUpload(prefs, glucoseDataSets, meterRecords, calRecords);
+                mongoStatus = doMongoUpload(prefs, glucoseDataSets, meterRecords, calRecords, xDripViewerMode);
                 Log.i(TAG, String.format("Finished upload of %s record using a Mongo in %s ms", glucoseDataSets.size() + meterRecords.size(), System.currentTimeMillis() - start));
             }
 
             return apiStatus || mongoStatus;
         }
 
-        private boolean doRESTUpload(SharedPreferences prefs, List<BgReading> glucoseDataSets, List<Calibration> meterRecords, List<Calibration> calRecords) {
+        private boolean doRESTUpload(SharedPreferences prefs, List<BgReading> glucoseDataSets, List<Calibration> meterRecords, List<Calibration> calRecords, boolean xDripViewerMode) {
             String baseURLSettings = prefs.getString("cloud_storage_api_base", "");
             ArrayList<String> baseURIs = new ArrayList<String>();
 
@@ -153,7 +155,7 @@ public class NightscoutUploader {
 
                     if (apiVersion == 1) {
                         String hashedSecret = Hashing.sha1().hashBytes(secret.getBytes(Charsets.UTF_8)).toString();
-                        doRESTUploadTo(nightscoutService, hashedSecret, glucoseDataSets, meterRecords, calRecords);
+                        doRESTUploadTo(nightscoutService, hashedSecret, glucoseDataSets, meterRecords, calRecords, xDripViewerMode);
                     } else {
                         doLegacyRESTUploadTo(nightscoutService, glucoseDataSets);
                     }
@@ -175,14 +177,13 @@ public class NightscoutUploader {
             postDeviceStatus(nightscoutService, null);
         }
 
-        private void doRESTUploadTo(NightscoutService nightscoutService, String secret, List<BgReading> glucoseDataSets, List<Calibration> meterRecords, List<Calibration> calRecords) throws Exception {
+        private void doRESTUploadTo(NightscoutService nightscoutService, String secret, List<BgReading> glucoseDataSets, List<Calibration> meterRecords, List<Calibration> calRecords, boolean xDripViewerMode) throws Exception {
             JSONArray array = new JSONArray();
-
             for (BgReading record : glucoseDataSets) {
-                populateV1APIBGEntry(array, record);
+                populateV1APIBGEntry(array, record, xDripViewerMode);
             }
             for (Calibration record : meterRecords) {
-                populateV1APIMeterReadingEntry(array, record);
+                populateV1APIMeterReadingEntry(array, record, xDripViewerMode);
             }
             for (Calibration record : calRecords) {
                 populateV1APICalibrationEntry(array, record);
@@ -195,20 +196,31 @@ public class NightscoutUploader {
             postDeviceStatus(nightscoutService, secret);
         }
 
-        private void populateV1APIBGEntry(JSONArray array, BgReading record) throws Exception {
+        private void populateV1APIBGEntry(JSONArray array, BgReading record, boolean xDripViewerMode) throws Exception {
+            
+            Log.e(TAG, "populateV1APIBGEntry preparing bg with data " + record.timestamp);
+            
             JSONObject json = new JSONObject();
             SimpleDateFormat format = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSZ", Locale.US);
             format.setTimeZone(TimeZone.getDefault());
             json.put("device", "xDrip-" + prefs.getString("dex_collection_method", "BluetoothWixel"));
             json.put("date", record.timestamp);
             json.put("dateString", format.format(record.timestamp));
-            json.put("sgv", (int)record.calculated_value);
+            json.put("sgv", Math.round(record.calculated_value));
             json.put("direction", record.slopeName());
             json.put("type", "sgv");
             json.put("filtered", record.ageAdjustedFiltered() * 1000);
             json.put("unfiltered", record.usedRaw() * 1000);
             json.put("rssi", 100);
             json.put("noise", record.noiseValue());
+            if(xDripViewerMode) {
+	            json.put("xDrip_raw", record.raw_data);
+	            json.put("xDrip_filtered", record.filtered_data);
+	            json.put("xDrip_calculated_value", record.calculated_value);
+	            json.put("xDrip_age_adjusted_raw_value", record.age_adjusted_raw_value);
+	            json.put("xDrip_calculated_current_slope", record.currentSlope());
+            }
+            json.put("sysTime", format.format(record.timestamp));
             array.put(json);
         }
 
@@ -219,12 +231,12 @@ public class NightscoutUploader {
             json.put("device", "xDrip-"+prefs.getString("dex_collection_method", "BluetoothWixel"));
             json.put("date", record.timestamp);
             json.put("dateString", format.format(record.timestamp));
-            json.put("sgv", (int)record.calculated_value);
+            json.put("sgv", Math.round(record.calculated_value));
             json.put("direction", record.slopeName());
             return RequestBody.create(MediaType.parse("application/json"), json.toString());
         }
 
-        private void populateV1APIMeterReadingEntry(JSONArray array, Calibration record) throws Exception {
+        private void populateV1APIMeterReadingEntry(JSONArray array, Calibration record, boolean xDripViewerMode) throws Exception {
             JSONObject json = new JSONObject();
             SimpleDateFormat format = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSZ", Locale.US);
             format.setTimeZone(TimeZone.getDefault());
@@ -233,10 +245,23 @@ public class NightscoutUploader {
             json.put("date", record.timestamp);
             json.put("dateString", format.format(record.timestamp));
             json.put("mbg", record.bg);
+            if(xDripViewerMode) {
+	            json.put("xDrip_slope", record.slope);
+	            json.put("xDrip_intercept", record.intercept);
+	            json.put("xDrip_estimate_raw_at_time_of_calibration", record.estimate_raw_at_time_of_calibration);
+	            json.put("xDrip_slope_confidence", record.slope_confidence);
+	            json.put("xDrip_sensor_confidence", record.sensor_confidence);
+	            json.put("xDrip_raw_timestamp", record.raw_timestamp);
+            }
+            json.put("sysTime", format.format(record.timestamp));
             array.put(json);
         }
 
         private void populateV1APICalibrationEntry(JSONArray array, Calibration record) throws Exception {
+
+            //do not upload undefined slopes
+            if(record.slope == 0d) return;
+
             JSONObject json = new JSONObject();
             SimpleDateFormat format = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSZ", Locale.US);
             format.setTimeZone(TimeZone.getDefault());
@@ -244,15 +269,10 @@ public class NightscoutUploader {
             json.put("type", "cal");
             json.put("date", record.timestamp);
             json.put("dateString", format.format(record.timestamp));
-            if(record.check_in) {
-                json.put("slope", (long) (record.first_slope));
-                json.put("intercept", (long) ((record.first_intercept)));
-                json.put("scale", record.first_scale);
-            } else {
-                json.put("slope", (long) (record.slope * 1000));
-                json.put("intercept", (long) ((record.intercept * -1000) / (record.slope * 1000)));
-                json.put("scale", 1);
-            }
+            json.put("slope", getNightscoutSlope(record));
+            json.put("intercept", getNightscoutIntercept(record));
+            json.put("scale", getNightscoutScale(record));
+            json.put("sysTime", format.format(record.timestamp));
             array.put(json);
         }
 
@@ -269,7 +289,7 @@ public class NightscoutUploader {
         }
 
         private boolean doMongoUpload(SharedPreferences prefs, List<BgReading> glucoseDataSets,
-                                      List<Calibration> meterRecords,  List<Calibration> calRecords) {
+                                      List<Calibration> meterRecords,  List<Calibration> calRecords, boolean xDripViewerMode) {
             SimpleDateFormat format = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSZ", Locale.US);
             format.setTimeZone(TimeZone.getDefault());
 
@@ -291,9 +311,10 @@ public class NightscoutUploader {
                     DBCollection dexcomData = db.getCollection(collectionName.trim());
 
                     try {
-                        Log.i(TAG, "The number of EGV records being sent to MongoDB is " + glucoseDataSets.size());
+                        Log.e(TAG, "The number of EGV records being sent to MongoDB is " + glucoseDataSets.size());
                         for (BgReading record : glucoseDataSets) {
                             // make db object
+                            Log.e(TAG, "uploading bg with data " + record.timestamp);
                             BasicDBObject testData = new BasicDBObject();
                             testData.put("device", "xDrip-" + prefs.getString("dex_collection_method", "BluetoothWixel"));
                             testData.put("date", record.timestamp);
@@ -305,7 +326,16 @@ public class NightscoutUploader {
                             testData.put("unfiltered", record.usedRaw() * 1000);
                             testData.put("rssi", 100);
                             testData.put("noise", record.noiseValue());
-                            dexcomData.insert(testData, WriteConcern.UNACKNOWLEDGED);
+                            if(xDripViewerMode) {
+	                            testData.put("xDrip_raw", record.raw_data);
+	                            testData.put("xDrip_filtered", record.filtered_data);
+	                            testData.put("xDrip_calculated_value", record.calculated_value);
+	                            testData.put("xDrip_calculated_current_slope", record.currentSlope());
+	                            testData.put("xDrip_age_adjusted_raw_value", record.age_adjusted_raw_value);
+                            }
+                            testData.put("sysTime", format.format(record.timestamp));
+                            BasicDBObject query = new BasicDBObject("type", "sgv").append("sysTime", format.format(record.timestamp));
+                            dexcomData.update(query, testData, true, false,  WriteConcern.UNACKNOWLEDGED);
                         }
 
                         Log.i(TAG, "The number of MBG records being sent to MongoDB is " + meterRecords.size());
@@ -317,26 +347,36 @@ public class NightscoutUploader {
                             testData.put("date", meterRecord.timestamp);
                             testData.put("dateString", format.format(meterRecord.timestamp));
                             testData.put("mbg", meterRecord.bg);
-                            dexcomData.insert(testData, WriteConcern.UNACKNOWLEDGED);
+                            if(xDripViewerMode) {
+	                            testData.put("xDrip_slope", meterRecord.slope);
+	                            testData.put("xDrip_intercept", meterRecord.intercept);
+	                            testData.put("xDrip_estimate_raw_at_time_of_calibration", meterRecord.estimate_raw_at_time_of_calibration);
+	                            testData.put("xDrip_slope_confidence", meterRecord.slope_confidence);
+	                            testData.put("xDrip_sensor_confidence", meterRecord.sensor_confidence);
+	                            testData.put("xDrip_raw_timestamp", meterRecord.raw_timestamp);
+                            }               
+                            testData.put("sysTime", format.format(meterRecord.timestamp));
+                            BasicDBObject query = new BasicDBObject("type", "mbg").append("sysTime", format.format(meterRecord.timestamp));
+                            dexcomData.update(query, testData, true, false,  WriteConcern.UNACKNOWLEDGED);
                         }
 
                         for (Calibration calRecord : calRecords) {
+                            //do not upload undefined slopes
+                            if(calRecord.slope == 0d) break;
                             // make db object
                             BasicDBObject testData = new BasicDBObject();
                             testData.put("device", "xDrip-" + prefs.getString("dex_collection_method", "BluetoothWixel"));
                             testData.put("date", calRecord.timestamp);
                             testData.put("dateString", format.format(calRecord.timestamp));
-                            if (calRecord.check_in) {
-                                testData.put("slope", (long) (calRecord.first_slope));
-                                testData.put("intercept", (long) ((calRecord.first_intercept)));
-                                testData.put("scale", calRecord.first_scale);
-                            } else {
-                                testData.put("slope", (long) (calRecord.slope * 1000));
-                                testData.put("intercept", (long) ((calRecord.intercept * -1000) / (calRecord.slope * 1000)));
-                                testData.put("scale", 1);
-                            }
+                            testData.put("slope", getNightscoutSlope(calRecord));
+                            testData.put("intercept", getNightscoutIntercept(calRecord));
+                            testData.put("scale", getNightscoutScale(calRecord));
+
                             testData.put("type", "cal");
-                            dexcomData.insert(testData, WriteConcern.UNACKNOWLEDGED);
+                            
+                            testData.put("sysTime", format.format(calRecord.timestamp));
+                            BasicDBObject query = new BasicDBObject("type", "cal").append("sysTime", format.format(calRecord.timestamp));
+                            dexcomData.update(query, testData, true, false,  WriteConcern.UNACKNOWLEDGED);
                         }
 
                         // TODO: quick port from original code, revisit before release
@@ -372,4 +412,50 @@ public class NightscoutUploader {
             return (int) (((float) level / (float) scale) * 100.0f);
         } else return 50;
     }
+    public static double getNightscoutRaw(BgReading bgReading, Calibration cal) {
+        double slope = 0, intercept = 0, scale = 0, filtered = 0, unfiltered = 0, nightscoutRaw = 0;
+        if (cal != null){
+            // slope/intercept/scale like uploaded to NightScout (NightScoutUploader.java)
+            slope = getNightscoutSlope(cal);
+            intercept = getNightscoutIntercept(cal);
+            scale = getNightscoutScale(cal);
+            unfiltered= bgReading.usedRaw()*1000;
+            filtered = bgReading.ageAdjustedFiltered()*1000;
+        }
+        //nightscoutRaw logic from https://github.com/nightscout/cgm-remote-monitor/blob/master/lib/plugins/rawbg.js#L59
+        if (slope != 0 && intercept != 0 && scale != 0) {
+            if (filtered == 0 || bgReading.calculated_value < 40) {
+                nightscoutRaw = scale * (unfiltered - intercept) / slope;
+            } else {
+                double ratio = scale * (filtered - intercept) / slope / bgReading.calculated_value;
+                nightscoutRaw = scale * (unfiltered - intercept) / slope / ratio;
+            }
+        }
+        return nightscoutRaw;
+    }
+
+    public static double getNightscoutScale(Calibration cal) {
+        if(cal.check_in) {
+            return  cal.first_scale;
+        } else {
+            return 1;
+        }
+    }
+
+    public static double getNightscoutIntercept(Calibration cal) {
+        if(cal.check_in) {
+            return cal.first_intercept;
+        } else {
+            return (cal.intercept * -1000) / (cal.slope);
+        }
+    }
+
+    public static double getNightscoutSlope(Calibration cal) {
+        if(cal.check_in) {
+            return cal.first_slope;
+        } else {
+            return 1000/cal.slope;
+        }
+    }
+    
 }

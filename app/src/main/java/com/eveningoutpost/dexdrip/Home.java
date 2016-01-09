@@ -38,10 +38,10 @@ import com.eveningoutpost.dexdrip.Models.UserError;
 import com.eveningoutpost.dexdrip.Services.WixelReader;
 import com.eveningoutpost.dexdrip.UtilityModels.BgGraphBuilder;
 import com.eveningoutpost.dexdrip.UtilityModels.CollectionServiceStarter;
-import com.eveningoutpost.dexdrip.UtilityModels.IdempotentMigrations;
 import com.eveningoutpost.dexdrip.UtilityModels.Intents;
 import com.eveningoutpost.dexdrip.utils.ActivityWithMenu;
 import com.eveningoutpost.dexdrip.utils.DatabaseUtil;
+import com.eveningoutpost.dexdrip.wearintegration.WatchUpdaterService;
 import com.nispok.snackbar.Snackbar;
 import com.nispok.snackbar.SnackbarManager;
 import com.nispok.snackbar.enums.SnackbarType;
@@ -82,15 +82,9 @@ public class Home extends ActivityWithMenu {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        CollectionServiceStarter collectionServiceStarter = new CollectionServiceStarter(getApplicationContext());
-        collectionServiceStarter.start(getApplicationContext());
-        PreferenceManager.setDefaultValues(this, R.xml.pref_general, false);
-        PreferenceManager.setDefaultValues(this, R.xml.pref_data_sync, false);
-        PreferenceManager.setDefaultValues(this, R.xml.pref_notifications, false);
-        PreferenceManager.setDefaultValues(this, R.xml.pref_data_source, false);
+
         prefs = PreferenceManager.getDefaultSharedPreferences(getApplicationContext());
         checkEula();
-        new IdempotentMigrations(getApplicationContext()).performAll();
         setContentView(R.layout.activity_home);
 
         this.dexbridgeBattery = (TextView) findViewById(R.id.textBridgeBattery);
@@ -124,7 +118,7 @@ public class Home extends ActivityWithMenu {
         return menu_name;
     }
 
-    public void checkEula() {
+    private void checkEula() {
         boolean IUnderstand = prefs.getBoolean("I_understand", false);
         if (!IUnderstand) {
             Intent intent = new Intent(getApplicationContext(), LicenseAgreementActivity.class);
@@ -149,18 +143,16 @@ public class Home extends ActivityWithMenu {
             @Override
             public void onReceive(Context ctx, Intent intent) {
                 holdViewport.set(0, 0, 0, 0);
-                setupCharts();
                 updateCurrentBgInfo();
             }
         };
         registerReceiver(_broadcastReceiver, new IntentFilter(Intent.ACTION_TIME_TICK));
         registerReceiver(newDataReceiver, new IntentFilter(Intents.ACTION_NEW_BG_ESTIMATE_NO_DATA));
         holdViewport.set(0, 0, 0, 0);
-        setupCharts();
         updateCurrentBgInfo();
     }
 
-    public void setupCharts() {
+    private void setupCharts() {
         bgGraphBuilder = new BgGraphBuilder(this);
         updateStuff = false;
         chart = (LineChartView) findViewById(R.id.chart);
@@ -249,7 +241,8 @@ public class Home extends ActivityWithMenu {
         }
     }
 
-    public void updateCurrentBgInfo() {
+    private void updateCurrentBgInfo() {
+        setupCharts();
         final TextView notificationText = (TextView) findViewById(R.id.notices);
         if(BgGraphBuilder.isXLargeTablet(getApplicationContext())) {
             notificationText.setTextSize(40);
@@ -378,7 +371,7 @@ public class Home extends ActivityWithMenu {
         displayCurrentInfo();
     }
 
-    public void displayCurrentInfo() {
+    private void displayCurrentInfo() {
         DecimalFormat df = new DecimalFormat("#");
         df.setMaximumFractionDigits(0);
 
@@ -411,7 +404,6 @@ public class Home extends ActivityWithMenu {
         if (lastBgReading != null) {
             displayCurrentInfoFromReading(lastBgReading, predictive);
         }
-        setupCharts();
     }
 
     private void displayCurrentInfoFromReading(BgReading lastBgReading, boolean predictive) {
@@ -469,11 +461,39 @@ public class Home extends ActivityWithMenu {
     @Override
     public boolean onCreateOptionsMenu(Menu menu) {
         getMenuInflater().inflate(R.menu.menu_home, menu);
+
+        //wear integration
+        if (!prefs.getBoolean("wear_sync", false)) {
+            menu.removeItem(R.id.action_open_watch_settings);
+            menu.removeItem(R.id.action_resend_last_bg);
+        }
+
+        //speak readings
+        MenuItem menuItem =  menu.findItem(R.id.action_toggle_speakreadings);
+        if(prefs.getBoolean("bg_to_speech_shortcut", false)){
+            menuItem.setVisible(true);
+            if(prefs.getBoolean("bg_to_speech", false)){
+                menuItem.setChecked(true);
+            } else {
+                menuItem.setChecked(false);
+            }
+        } else {
+            menuItem.setVisible(false);
+        }
         return super.onCreateOptionsMenu(menu);
     }
 
     @Override
     public boolean onOptionsItemSelected(MenuItem item) {
+
+        switch (item.getItemId()) {
+            case R.id.action_resend_last_bg:
+                startService(new Intent(this, WatchUpdaterService.class).setAction(WatchUpdaterService.ACTION_RESEND));
+                break;
+            case R.id.action_open_watch_settings:
+                startService(new Intent(this, WatchUpdaterService.class).setAction(WatchUpdaterService.ACTION_OPEN_SETTINGS));
+        }
+
         if (item.getItemId() == R.id.action_export_database) {
             new AsyncTask<Void, Void, String>() {
                 @Override
@@ -547,6 +567,11 @@ public class Home extends ActivityWithMenu {
             return true;
         }
 
+        if (item.getItemId() == R.id.action_toggle_speakreadings) {
+            prefs.edit().putBoolean("bg_to_speech", !prefs.getBoolean("bg_to_speech", false)).commit();
+            invalidateOptionsMenu();
+            return true;
+        }
 
         return super.onOptionsItemSelected(item);
     }
