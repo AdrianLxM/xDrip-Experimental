@@ -129,6 +129,10 @@
             android:label="Statistics" >
         </activity>
         <activity
+            android:name=".BGHistory"
+            android:label="BG History" >
+        </activity>
+        <activity
             android:name=".SnoozeActivity"
             android:label="@string/title_snooze" >
         </activity>
@@ -178,6 +182,12 @@
             android:exported="true" >
         </service>
 
+        <service
+            android:name=".Services.G5CollectionService"
+            android:enabled="true"
+            android:exported="true" >
+        </service>
+
         <activity
             android:name=".ShareTest"
             android:label="@string/title_activity_share_test" >
@@ -220,6 +230,10 @@
         <activity
             android:name=".FollowerManagementActivity"
             android:label="Manage Followers" />
+        <activity
+            android:name=".utils.SdcardImportExport"
+            android:noHistory="true"
+            android:label="Settings on external storage" />
 
         <service
             android:name=".Services.SnoozeOnNotificationDismissService"
