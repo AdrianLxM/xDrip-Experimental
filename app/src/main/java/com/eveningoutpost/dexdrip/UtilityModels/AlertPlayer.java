@@ -5,13 +5,16 @@ import android.app.PendingIntent;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.res.AssetFileDescriptor;
 import android.media.AudioManager;
 import android.media.MediaPlayer;
 import android.net.Uri;
+import android.os.Looper;
 import android.preference.PreferenceManager;
 import android.support.v4.app.NotificationCompat;
-import com.eveningoutpost.dexdrip.Models.UserError.Log;
+import android.os.Handler;
 
+import com.eveningoutpost.dexdrip.Models.UserError.Log;
 import com.eveningoutpost.dexdrip.EditAlertActivity;
 import com.eveningoutpost.dexdrip.Models.ActiveBgAlert;
 import com.eveningoutpost.dexdrip.Models.AlertType;
@@ -19,13 +22,72 @@ import com.eveningoutpost.dexdrip.R;
 import com.eveningoutpost.dexdrip.Services.SnoozeOnNotificationDismissService;
 import com.eveningoutpost.dexdrip.SnoozeActivity;
 
+import java.io.IOException;
+import java.text.SimpleDateFormat;
 import java.util.Date;
+
+// A helper class to create the mediaplayer on the UI thread. 
+// This is needed in order for the callbackst to work.
+class MediaPlayerCreaterHelper {
+    
+    private final static String TAG = AlertPlayer.class.getSimpleName();
+
+    Object lock1_ = new Object();
+    boolean mplayerCreated_ = false;
+    MediaPlayer mediaPlayer_ = null;
+    
+    MediaPlayer createMediaPlayer(Context ctx) {
+        if (isUiThread()) {
+            return new MediaPlayer();
+        }
+        
+        mplayerCreated_ = false;
+        mediaPlayer_ = null;
+        Handler mainHandler = new Handler(ctx.getMainLooper());
+
+        Runnable myRunnable = new Runnable() {
+            @Override 
+            public void run() {
+                synchronized(lock1_) {
+                    try {
+                        mediaPlayer_ = new MediaPlayer();
+                        Log.i(TAG, "media player created");
+                    } finally {
+                        mplayerCreated_ = true;
+                        lock1_.notifyAll();
+                    }
+                    
+                }
+            }
+        };
+        mainHandler.post(myRunnable);
+        
+        try {
+            synchronized(lock1_) {
+                while(mplayerCreated_ == false) {
+                   
+                        lock1_.wait();
+                }
+            } 
+        }catch (InterruptedException e){
+             Log.e(TAG, "Cought exception", e);
+        }
+
+        return mediaPlayer_;
+    }
+    
+    boolean isUiThread() {
+        return Looper.myLooper() == Looper.getMainLooper();
+    }
+}
 
 public class AlertPlayer {
 
     static AlertPlayer singletone;
 
+    private final static SimpleDateFormat dateFormat = new SimpleDateFormat("HH:mm");
     private final static String TAG = AlertPlayer.class.getSimpleName();
+
     private MediaPlayer mediaPlayer;
     int volumeBeforeAlert;
     int volumeForThisAlert;
@@ -135,23 +197,88 @@ public class AlertPlayer {
 
     }
 
+    
+    private boolean setDataSource(Context context, MediaPlayer mp, Uri uri) {
+        try {
+            mp.setDataSource(context, uri);
+            return true;
+        } catch (IOException ex) {
+            Log.e(TAG, "create failed:", ex);
+            // fall through
+        } catch (IllegalArgumentException ex) {
+            Log.e(TAG, "create failed:", ex);
+            // fall through
+        } catch (SecurityException ex) {
+            Log.e(TAG, "create failed:", ex);
+            // fall through
+        }
+        return false;
+    }
+    
+    private boolean setDataSource(Context context, MediaPlayer mp, int resid) {
+        try {
+            AssetFileDescriptor afd = context.getResources().openRawResourceFd(resid);
+            if (afd == null) return false;
+
+            mp.setDataSource(afd.getFileDescriptor(), afd.getStartOffset(), afd.getLength());
+            afd.close();
+
+            return true;
+        } catch (IOException ex) {
+            Log.e(TAG, "create failed:", ex);
+            // fall through
+        } catch (IllegalArgumentException ex) {
+            Log.e(TAG, "create failed:", ex);
+            // fall through
+        } catch (SecurityException ex) {
+            Log.e(TAG, "create failed:", ex);
+            // fall through
+        }
+        return false;
+    }
+
     private void PlayFile(final Context ctx, String FileName, float VolumeFrac) {
         Log.i(TAG, "PlayFile: called FileName = " + FileName);
+
         if(mediaPlayer != null) {
             Log.i(TAG, "ERROR, PlayFile:going to leak a mediaplayer !!!");
+            mediaPlayer.release();
+            mediaPlayer = null;
         }
-        if(FileName != null && FileName.length() > 0) {
-            mediaPlayer = MediaPlayer.create(ctx, Uri.parse(FileName), null);
-        }
+        
+        mediaPlayer = new MediaPlayerCreaterHelper().createMediaPlayer(ctx);
         if(mediaPlayer == null) {
-            Log.i(TAG, "PlayFile: Creating mediaplayer with file " + FileName + " failed. using default alarm");
-            mediaPlayer = MediaPlayer.create(ctx, R.raw.default_alert);
+            Log.e(TAG, "MediaPlayerCreaterHelper().createMediaPlayer failed");
+            return;
         }
+        
+        boolean setDataSourceSucceeded = false;
+        if(FileName != null && FileName.length() > 0) {
+            setDataSourceSucceeded = setDataSource(ctx, mediaPlayer, Uri.parse(FileName));
+        }
+        if (setDataSourceSucceeded == false) {
+            setDataSourceSucceeded = setDataSource(ctx, mediaPlayer, R.raw.default_alert);
+        }
+        if(setDataSourceSucceeded == false) {
+            Log.e(TAG, "setDataSource failed");
+            return;
+        }
+            
+        try {
+            mediaPlayer.prepare();
+        } catch (IOException e) {
+            Log.e(TAG, "Cought exception preparing meidaPlayer", e);
+            return;
+        }
+        
+
         if(mediaPlayer != null) {
             AudioManager manager = (AudioManager) ctx.getSystemService(Context.AUDIO_SERVICE);
             int maxVolume = manager.getStreamMaxVolume(AudioManager.STREAM_MUSIC);
             volumeBeforeAlert = manager.getStreamVolume(AudioManager.STREAM_MUSIC);
             volumeForThisAlert = (int)(maxVolume * VolumeFrac);
+            
+            Log.i(TAG, "before playing volumeBeforeAlert " + volumeBeforeAlert + " volumeForThisAlert " + volumeForThisAlert);
             manager.setStreamVolume(AudioManager.STREAM_MUSIC, volumeForThisAlert, 0);
 
             mediaPlayer.setOnCompletionListener(new MediaPlayer.OnCompletionListener() {
@@ -160,6 +287,8 @@ public class AlertPlayer {
                     Log.i(TAG, "PlayFile: onCompletion called (finished playing) ");
                     AudioManager manager = (AudioManager) ctx.getSystemService(Context.AUDIO_SERVICE);
                     int currentVolume = manager.getStreamVolume(AudioManager.STREAM_MUSIC);
+                    Log.i(TAG, "After playing volumeBeforeAlert " + volumeBeforeAlert + " volumeForThisAlert " + volumeForThisAlert
+                            + " currentVolume " + currentVolume);
                     if(volumeForThisAlert == currentVolume) {
                         // If the user has changed the volume, don't change it again.
                         manager.setStreamVolume(AudioManager.STREAM_MUSIC, volumeBeforeAlert, 0);
@@ -180,6 +309,7 @@ public class AlertPlayer {
     }
     private PendingIntent snoozeIntent(Context ctx){
         Intent intent = new Intent(ctx, SnoozeOnNotificationDismissService.class);
+        intent.putExtra("alertType", "bg_alerts");
         return PendingIntent.getService(ctx, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT);
     }
 
@@ -234,7 +364,7 @@ public class AlertPlayer {
         }
 
         String title = bgValue + " " + alert.name;
-        String content = "BG LEVEL ALERT: " + bgValue;
+        String content = "BG LEVEL ALERT (" + dateFormat.format(new Date()) + "): " + bgValue;
         Intent intent = new Intent(ctx, SnoozeActivity.class);
 
         NotificationCompat.Builder  builder = new NotificationCompat.Builder(ctx)
@@ -264,10 +394,22 @@ public class AlertPlayer {
         }
         if (profile != ALERT_PROFILE_SILENT && alert.vibrate) {
             builder.setVibrate(Notifications.vibratePattern);
+        } else {
+            // In order to still show on all android wear watches, either a sound or a vibrate pattern
+            // seems to be needed. This pattern basically does not vibrate:
+            builder.setVibrate(new long[]{1, 0});
         }
         NotificationManager mNotifyMgr = (NotificationManager) ctx.getSystemService(Context.NOTIFICATION_SERVICE);
         mNotifyMgr.cancel(Notifications.exportAlertNotificationId);
         mNotifyMgr.notify(Notifications.exportAlertNotificationId, builder.build());
+
+
+        //initiate sending data to pebble that will cause it to vibrate
+        if(PreferenceManager.getDefaultSharedPreferences(ctx).getBoolean("broadcast_to_pebble", false)
+                && PreferenceManager.getDefaultSharedPreferences(ctx).getBoolean("pebble_vibe_alerts", true)) {
+            ctx.startService(new Intent(ctx, PebbleSync.class));
+        }
+
     }
 
     private void notificationDismiss(Context ctx) {

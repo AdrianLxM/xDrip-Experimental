@@ -22,17 +22,44 @@
             android:key="scan_share2_barcode"
             android:shouldDisableView="true"
             android:summary="@string/pref_share2_scan_barcode_summary" />
-
+        <EditTextPreference
+            android:key="dex_txid"
+            android:title="Dexcom Transmitter ID"
+            android:imeOptions="actionDone"
+            android:singleLine="true"
+            android:maxLines="1"
+            android:inputType="textNoSuggestions|textVisiblePassword|textCapCharacters"
+            android:summary="ID of your Dexcom Transmitter, eg ABCDEF" />
+        <CheckBoxPreference
+            android:key="display_bridge_battery"
+            android:title="Display Bridge Battery"
+            android:summary="Choose to display the bridge battery level"
+            android:defaultValue="true" />
         <CheckBoxPreference
             android:key="run_service_in_foreground"
             android:title="Run Collection Service in foreground"
             android:summary="Running in foreground prevents android from killing the service and creates a notification with a trend line."
             android:defaultValue="false" />
-        <EditTextPreference
-            android:key="dex_txid"
-            android:title="Dexcom Transmitter ID"
-            android:summary="ID of your Dexcom Transmitter, eg 12AB3"
-            android:defaultValue="00000" />
+        <CheckBoxPreference
+            android:key="run_ble_scan_constantly"
+            android:title="Scan for G5 constantly"
+            android:summary="Some devices work better when scanning constantly, others do not. If reading is reliable when this setting is not selected, you should have improved battery life. Turn this setting on if you are missing readings at high rates and unexpected times."
+            android:defaultValue="false" />
+        <CheckBoxPreference
+            android:key="run_G5_ble_tasks_on_uithread"
+            android:title="Force G5 to UI Thread"
+            android:summary="This is crucial for some Android devices to properly connect, but can cause missed readings when other UI intensive activities are in use."
+            android:defaultValue="false" />
+        <CheckBoxPreference
+            android:key="always_get_new_keys"
+            android:title="Authenticate G5 before each read"
+            android:summary="This will attempt a full authentication each read attempt. Redundant if Unbond before each read is also selected."
+            android:defaultValue="false" />
+        <CheckBoxPreference
+            android:key="always_unbond_G5"
+            android:title="Unbond G5 before each read"
+            android:summary="This will remove the G5 from your device's paired device list, and attempt a full authentication and bonding with each read attempt."
+            android:defaultValue="false" />
         <EditTextPreference
             android:title="List of recievers"
             android:key="wifi_recievers_addresses"
@@ -41,5 +68,15 @@
             android:defaultValue=""
             android:inputType="textUri">
         </EditTextPreference>
+        
+        <EditTextPreference
+            android:title="Nightscout website address"
+            android:key="xdrip_viewer_ns_addresses"
+            android:dialogTitle="@string/xdrip_viewer_ns_dialog_title"
+            android:dialogMessage="@string/xdrip_viewer_ns_message_message"
+            android:defaultValue="https://{YOUR-SITE}.azurewebsites.net"
+            android:inputType="textUri">
+        </EditTextPreference>
+        
     </PreferenceCategory>
 </PreferenceScreen>

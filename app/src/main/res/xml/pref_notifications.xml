@@ -1,3 +1,5 @@
+<!--                        android:targetPackage="@string/target_package" -->
+
 <PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android">
     <PreferenceCategory
         android:title="Alerts and Notifications"
@@ -6,7 +8,7 @@
             android:key="bg_level_alerts" >
             <intent
                 android:action="android.intent.action.MAIN"
-                android:targetPackage="com.eveningoutpost.dexdrip"
+                android:targetPackage="@string/target_package"
                 android:targetClass="com.eveningoutpost.dexdrip.AlertList"
                 />
         </Preference>
@@ -83,7 +85,16 @@
                 android:summary="Number of minutes to pass before raising the same calibration request."
                 android:defaultValue="20" />
         </PreferenceScreen>
-
+        
+S        <PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android"
+            android:title="Missed reading Alert"
+            android:key="missed_readings_screen">
+            <intent
+                        android:action="android.intent.action.MAIN"
+			android:targetPackage="@string/target_package"
+                        android:targetClass="com.eveningoutpost.dexdrip.MissedReadingActivity"/>
+        </PreferenceScreen>
+        
         <PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android"
             android:title="Other Alerts"
             android:key="other_alerts_screen">
@@ -103,21 +114,6 @@
                     android:defaultValue="90" />
             </PreferenceCategory>
 
-            <PreferenceCategory
-                android:title="Missed Readings">
-                <CheckBoxPreference
-                    android:key="bg_missed_alerts"
-                    android:title="Missed Reading Alerts"
-                    android:defaultValue="false" />
-                <EditTextPreference
-                    android:dependency="bg_missed_alerts"
-                    android:key="bg_missed_minutes"
-                    android:title="Minutes until alerting for missed readings"
-                    android:inputType="number"
-                    android:summary="Alert if no data receieved in x minutes"
-                    android:defaultValue="30" />
-            </PreferenceCategory>
-            
             <PreferenceCategory
                 android:title="Falling/Rising BG">
                 <CheckBoxPreference
@@ -161,8 +157,22 @@
                     android:key="other_alerts_snooze"
                     android:title="Alert Snooze"
                     android:numeric="integer"
-                    android:summary="Minimum number of minutes to pass before raising the same alert."
+                    android:summary="Number of minutes before raising the same alert after snooze."
                     android:defaultValue="20" />
+                
+                <CheckBoxPreference
+                    android:key="disable_alerts_reraise"
+                    android:title="Reraise alerts before snooze time"
+                    android:summary="Reraise the alert if not snoozed sooner"
+                    android:defaultValue="false" />
+                
+                <EditTextPreference
+                    android:dependency="disable_alerts_reraise"
+                    android:key="other_alerts_reraise_sec"
+                    android:title="Alert Reraise time"
+                    android:numeric="integer"
+                    android:summary="Number of SECONDS to pass before raising the same alert."
+                    android:defaultValue="60" />
             </PreferenceCategory>
         </PreferenceScreen>
     </PreferenceCategory>

@@ -12,9 +12,10 @@ import com.eveningoutpost.dexdrip.Models.UserError.Log;
 import com.eveningoutpost.dexdrip.Services.DailyIntentService;
 import com.eveningoutpost.dexdrip.Services.DexCollectionService;
 import com.eveningoutpost.dexdrip.Services.DexShareCollectionService;
+import com.eveningoutpost.dexdrip.Services.G5CollectionService;
 import com.eveningoutpost.dexdrip.Services.SyncService;
 import com.eveningoutpost.dexdrip.Services.WifiCollectionService;
-import com.eveningoutpost.dexdrip.Services.WixelReader;
+import com.eveningoutpost.dexdrip.Services.XDripViewer;
 
 import java.io.IOException;
 import java.util.Calendar;
@@ -29,6 +30,9 @@ public class CollectionServiceStarter {
 
 
     public static boolean isWifiandBTWixel(Context context) {
+        if(XDripViewer.isxDripViewerMode(context)) {
+            return false;
+        }
         SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(context);
         String collection_method = prefs.getString("dex_collection_method", "BluetoothWixel");
         if(collection_method.compareTo("WifiBlueToothWixel") == 0) {
@@ -36,18 +40,89 @@ public class CollectionServiceStarter {
         }
         return false;
     }
+    
+    private static boolean isWifiandBTWixel(String collection_method, Context context) {
+        if(XDripViewer.isxDripViewerMode(context)) {
+            return false;
+        }
+        return collection_method.equals("WifiBlueToothWixel"); 
+    }
 
-    public static boolean isBTWixel(Context context) {
+    
+    public static boolean isWifiandDexbridgeWixel(Context context) {
+        if(XDripViewer.isxDripViewerMode(context)) {
+            return false;
+        }
         SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(context);
         String collection_method = prefs.getString("dex_collection_method", "BluetoothWixel");
-        if(collection_method.compareTo("BluetoothWixel") == 0) {
+        if(collection_method.compareTo("WifiDexbridgeWixel") == 0) {
             return true;
         }
         return false;
     }
-    public static boolean isBTWixel(String collection_method) { return collection_method.equals("BluetoothWixel"); }
+  
+    private static boolean isWifiandDexbridgeWixel(String collection_method, Context context) {
+        if(XDripViewer.isxDripViewerMode(context)) {
+            return false;
+        }
+        return collection_method.equals("WifiDexbridgeWixel"); 
+    }
 
-    public static boolean isDexbridgeWixel(Context context) {
+    
+    
+    
+    public static boolean isBTWixel(Context context) {
+        if(XDripViewer.isxDripViewerMode(context)) {
+            return false;
+        }
+        SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(context);
+        String collection_method = prefs.getString("dex_collection_method", "BluetoothWixel");
+        if(collection_method.compareTo("BluetoothWixel") == 0 || isLimitter(context)) {
+            return true;
+        }
+        return false;
+    }
+
+    /*
+    * LimiTTer emulates a BT-Wixel and works with the BT-Wixel service.
+    * It would work without any changes but in some cases knowing that the data does not
+    * come from a Dexcom sensor but from a Libre sensor might enhance the performance.
+    * */
+
+    public static boolean isLimitter(Context context) {
+        if(XDripViewer.isxDripViewerMode(context)) {
+            return false;
+        }
+        SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(context);
+        String collection_method = prefs.getString("dex_collection_method", "BluetoothWixel");
+        if(collection_method.compareTo("LimiTTer") == 0) {
+            return true;
+        }
+        return false;
+    }
+
+    private static boolean isBTWixel(String collection_method, Context context) {
+        if(XDripViewer.isxDripViewerMode(context)) {
+            return false;
+        }
+        //LimiTTer hardware emulates BTWixel packages
+        return collection_method.equals("BluetoothWixel")||collection_method.equals("LimiTTer");
+    }
+    
+    // returns true if this DexBridge or DexBrige + wifi togeather.
+    public static boolean isBteWixelorWifiandBtWixel(Context context) {
+      return isBTWixel(context) || isWifiandBTWixel(context);
+    }
+
+    // returns true if this DexBridge or DexBrige + wifi togeather.
+    public static boolean isDexbridgeWixelorWifiandDexbridgeWixel(Context context) {
+      return isDexbridgeWixel(context) || isWifiandDexbridgeWixel(context);
+    }
+    
+    private static boolean isDexbridgeWixel(Context context) {
+        if(XDripViewer.isxDripViewerMode(context)) {
+            return false;
+        }
         SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(context);
         String collection_method = prefs.getString("dex_collection_method", "BluetoothWixel");
         if(collection_method.compareTo("DexbridgeWixel") == 0) {
@@ -55,9 +130,18 @@ public class CollectionServiceStarter {
         }
         return false;
     }
-    public static boolean isDexbridgeWixel(String collection_method) { return collection_method.equals("DexbridgeWixel"); }
+    
+    private static boolean isDexbridgeWixel(String collection_method, Context context) {
+        if(XDripViewer.isxDripViewerMode(context)) {
+            return false;
+        }
+        return collection_method.equals("DexbridgeWixel"); 
+    }
 
     public static boolean isBTShare(Context context) {
+        if(XDripViewer.isxDripViewerMode(context)) {
+            return false;
+        }
         SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(context);
         String collection_method = prefs.getString("dex_collection_method", "BluetoothWixel");
         if(collection_method.compareTo("DexcomShare") == 0) {
@@ -65,9 +149,34 @@ public class CollectionServiceStarter {
         }
         return false;
     }
-    public static boolean isBTShare(String collection_method) { return collection_method.equals("DexcomShare"); }
+    public static boolean isBTShare(String collection_method, Context context) {
+        if(XDripViewer.isxDripViewerMode(context)) {
+            return false;
+        }
+        return collection_method.equals("DexcomShare"); 
+    }
+
+    public static boolean isBTG5(String collection_method, Context context) {
+       if(XDripViewer.isxDripViewerMode(context)) {
+        return false;
+       }
+        return collection_method.equals("DexcomG5");
+    }
+
+
+    public static boolean isBTG5(Context context) {
+        SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(context);
+        String collection_method = prefs.getString("dex_collection_method", "BluetoothWixel");
+        if(collection_method.compareTo("DexcomG5") == 0) {
+            return true;
+        }
+        return false;
+    }
 
     public static boolean isWifiWixel(Context context) {
+        if(XDripViewer.isxDripViewerMode(context)) {
+            return true;
+        }
         SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(context);
         String collection_method = prefs.getString("dex_collection_method", "BluetoothWixel");
         if(collection_method.compareTo("WifiWixel") == 0) {
@@ -75,7 +184,12 @@ public class CollectionServiceStarter {
         }
         return false;
     }
-    public static boolean isWifiWixel(String collection_method) { return collection_method.equals("WifiWixel"); }
+    public static boolean isWifiWixel(String collection_method, Context context) {
+        if(XDripViewer.isxDripViewerMode(context)) {
+            return true;
+        }
+        return collection_method.equals("WifiWixel"); 
+    }
 
     public static void newStart(Context context) {
         CollectionServiceStarter collectionServiceStarter = new CollectionServiceStarter(context);
@@ -86,26 +200,36 @@ public class CollectionServiceStarter {
         mContext = context;
         SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(mContext);
 
-        if(isBTWixel(collection_method)||isDexbridgeWixel(collection_method)) {
+        if(isBTWixel(collection_method, context)||isDexbridgeWixel(collection_method, context)) {
             Log.d("DexDrip", "Starting bt wixel collector");
             stopWifWixelThread();
             stopBtShareService();
+            stopG5ShareService();
             startBtWixelService();
-        } else if(isWifiWixel(collection_method)){
+        } else if(isWifiWixel(collection_method, context)){
             Log.d("DexDrip", "Starting wifi wixel collector");
             stopBtWixelService();
             stopBtShareService();
+            stopG5ShareService();
             startWifWixelThread();
-        } else if(isBTShare(collection_method)) {
+        } else if(isBTShare(collection_method, context)) {
             Log.d("DexDrip", "Starting bt share collector");
             stopBtWixelService();
             stopWifWixelThread();
+            stopG5ShareService();
             startBtShareService();
-        } else if (isWifiandBTWixel(context)) {
+        } else if(isBTG5(collection_method, context)) {
+            Log.d("DexDrip", "Starting G5 share collector");
+            stopBtWixelService();
+            stopWifWixelThread();
+            stopBtShareService();
+            startBtG5Service();
+        } else if (isWifiandBTWixel(collection_method, context) || isWifiandDexbridgeWixel(collection_method, context)) {
             Log.d("DexDrip", "Starting wifi and bt wixel collector");
             stopBtWixelService();
             stopWifWixelThread();
             stopBtShareService();
+            stopG5ShareService();
             // start both
             Log.d("DexDrip", "Starting wifi wixel collector first");
             startWifWixelThread();
@@ -150,6 +274,7 @@ public class CollectionServiceStarter {
         collectionServiceStarter.stopBtShareService();
         collectionServiceStarter.stopBtWixelService();
         collectionServiceStarter.stopWifWixelThread();
+        collectionServiceStarter.stopG5ShareService();
         collectionServiceStarter.start(context);
     }
 
@@ -158,6 +283,7 @@ public class CollectionServiceStarter {
         collectionServiceStarter.stopBtShareService();
         collectionServiceStarter.stopBtWixelService();
         collectionServiceStarter.stopWifWixelThread();
+        collectionServiceStarter.stopG5ShareService();
         collectionServiceStarter.start(context, collection_method);
     }
 
@@ -178,6 +304,14 @@ public class CollectionServiceStarter {
             mContext.startService(new Intent(mContext, DexShareCollectionService.class));
         }
     }
+
+    private void startBtG5Service() {
+        Log.d(TAG, "starting G5 share service");
+        //if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.JELLY_BEAN_MR2) {
+            mContext.startService(new Intent(mContext, G5CollectionService.class));
+        //}
+    }
+
     private void startPebbleSyncService() {
         Log.d(TAG, "starting PebbleSync service");
         mContext.startService(new Intent(mContext, PebbleSync.class));
@@ -205,10 +339,15 @@ public class CollectionServiceStarter {
         Log.d(TAG, "starting wifi wixel service");
         mContext.startService(new Intent(mContext, WifiCollectionService.class));
     }
-
     private void stopWifWixelThread() {
         Log.d(TAG, "stopping wifi wixel service");
         mContext.stopService(new Intent(mContext, WifiCollectionService.class));
     }
+
+    private void stopG5ShareService() {
+        Log.d(TAG, "stopping G5  service");
+        mContext.stopService(new Intent(mContext, G5CollectionService.class));
+    }
+
 
 }

@@ -5,11 +5,14 @@ import android.content.SharedPreferences;
 import android.content.res.Configuration;
 import android.graphics.Color;
 import android.preference.PreferenceManager;
+import android.support.annotation.NonNull;
 import android.text.format.DateFormat;
 import android.widget.Toast;
 
+import com.eveningoutpost.dexdrip.Home;
 import com.eveningoutpost.dexdrip.Models.BgReading;
 import com.eveningoutpost.dexdrip.Models.Calibration;
+import com.eveningoutpost.dexdrip.Models.UserError;
 
 import java.text.DecimalFormat;
 import java.text.DecimalFormatSymbols;
@@ -31,14 +34,33 @@ import lecho.lib.hellocharts.model.PointValue;
 import lecho.lib.hellocharts.model.Viewport;
 import lecho.lib.hellocharts.util.ChartUtils;
 import lecho.lib.hellocharts.view.Chart;
+import com.eveningoutpost.dexdrip.Models.UserError.Log;
 
 /**
  * Created by stephenblack on 11/15/14.
  */
+
+class PointValueExtended extends PointValue {
+	
+	public PointValueExtended(float x, float y, float filtered) {
+		super(x, y);
+		calculatedFilteredValue = filtered;
+	}
+	   public PointValueExtended(float x, float y) {
+		   super(x, y);
+	        calculatedFilteredValue = -1;
+	    }
+	
+	float calculatedFilteredValue;
+}
+
+
 public class BgGraphBuilder {
+	private static final String TAG = BgGraphBuilder.class.getSimpleName();
     public static final int FUZZER = (1000 * 30 * 5);
-    public long  end_time = (new Date().getTime() + (60000 * 10)) / FUZZER;
-    public long  start_time = end_time - ((60000 * 60 * 24)) / FUZZER;
+    public static final int MAX_SLOPE_MINUTES = 21;
+    public long  end_time;
+    public long  start_time;
     public Context context;
     public SharedPreferences prefs;
     public double highMark;
@@ -50,20 +72,38 @@ public class BgGraphBuilder {
     final int axisTextSize;
     final int previewAxisTextSize;
     final int hoursPreviewStep;
-
-    private double endHour;
-    private final int numValues =(60/5)*24;
-    private final List<BgReading> bgReadings = BgReading.latestForGraph( numValues, (start_time * FUZZER));
-    private final List<Calibration> calibrations = Calibration.latestForGraph( numValues, (start_time * FUZZER));
+    private final static double timeshift = 500000;
+    private static final int NUM_VALUES =(60/5)*24;
+    private final List<BgReading> bgReadings;
+    private final List<Calibration> calibrations;
     private List<PointValue> inRangeValues = new ArrayList<PointValue>();
     private List<PointValue> highValues = new ArrayList<PointValue>();
     private List<PointValue> lowValues = new ArrayList<PointValue>();
     private List<PointValue> rawInterpretedValues = new ArrayList<PointValue>();
+    private List<PointValue> filteredValues = new ArrayList<PointValue>();
     private List<PointValue> calibrationValues = new ArrayList<PointValue>();
+    static final boolean LINE_VISIBLE = true;
+    static final boolean FILL_UNDER_LINE = false;
     public Viewport viewport;
 
 
     public BgGraphBuilder(Context context){
+        this(context, new Date().getTime() + (60000 * 10));
+    }
+
+    public BgGraphBuilder(Context context, long end){
+        this(context, end - (60000 * 60 * 24), end);
+    }
+
+    public BgGraphBuilder(Context context, long start, long end){
+        this(context, start, end, NUM_VALUES);
+    }
+
+    public BgGraphBuilder(Context context, long start, long end, int numValues){
+        end_time = end;
+        start_time = start;
+        bgReadings = BgReading.latestForGraph( numValues, start, end);
+        calibrations = Calibration.latestForGraph( numValues, start, end);
         this.context = context;
         this.prefs = PreferenceManager.getDefaultSharedPreferences(context);
         this.highMark = Double.parseDouble(prefs.getString("highValue", "170"));
@@ -80,7 +120,7 @@ public class BgGraphBuilder {
     public LineChartData lineData() {
         LineChartData lineData = new LineChartData(defaultLines());
         lineData.setAxisYLeft(yAxis());
-        lineData.setAxisXBottom(xAxis());
+        lineData.setAxisXBottom(chartXAxis());
         return lineData;
     }
 
@@ -88,9 +128,13 @@ public class BgGraphBuilder {
         LineChartData previewLineData = new LineChartData(lineData());
         previewLineData.setAxisYLeft(yAxis());
         previewLineData.setAxisXBottom(previewXAxis());
-        previewLineData.getLines().get(4).setPointRadius(2);
-        previewLineData.getLines().get(5).setPointRadius(2);
-        previewLineData.getLines().get(6).setPointRadius(2);
+        // because the lines array can now be a varying size we
+        // offset from the end instead of hardcoded values. This
+        // is still brittle but better than absolute offsets.
+        final int array_offset = previewLineData.getLines().size()-5;
+        previewLineData.getLines().get(array_offset).setPointRadius(2);
+        previewLineData.getLines().get(array_offset+1).setPointRadius(2);
+        previewLineData.getLines().get(array_offset+2).setPointRadius(2);
         return previewLineData;
     }
 
@@ -103,6 +147,15 @@ public class BgGraphBuilder {
         lines.add(maxShowLine());
         lines.add(highLine());
         lines.add(lowLine());
+
+        if (prefs.getBoolean("show_filtered_curve", false)) {
+            final ArrayList<Line> filtered_lines = filteredLines();
+            for (Line thisline : filtered_lines) {
+                lines.add(thisline);
+            }
+        }
+        // these last entries cannot be moved if
+        // the point size change in previewLineData is to work
         lines.add(inRangeValuesLine());
         lines.add(lowValuesLine());
         lines.add(highValuesLine());
@@ -113,7 +166,7 @@ public class BgGraphBuilder {
 
     public Line highValuesLine() {
         Line highValuesLine = new Line(highValues);
-        highValuesLine.setColor(ChartUtils.COLOR_ORANGE);
+        highValuesLine.setColor(Color.parseColor("#FFFF00"));
         highValuesLine.setHasLines(false);
         highValuesLine.setPointRadius(pointSize);
         highValuesLine.setHasPoints(true);
@@ -122,7 +175,7 @@ public class BgGraphBuilder {
 
     public Line lowValuesLine() {
         Line lowValuesLine = new Line(lowValues);
-        lowValuesLine.setColor(Color.parseColor("#C30909"));
+        lowValuesLine.setColor(Color.parseColor("#FF0000"));
         lowValuesLine.setHasLines(false);
         lowValuesLine.setPointRadius(pointSize);
         lowValuesLine.setHasPoints(true);
@@ -131,7 +184,7 @@ public class BgGraphBuilder {
 
     public Line inRangeValuesLine() {
         Line inRangeValuesLine = new Line(inRangeValues);
-        inRangeValuesLine.setColor(ChartUtils.COLOR_BLUE);
+        inRangeValuesLine.setColor(Color.parseColor("#00FF00"));
         inRangeValuesLine.setHasLines(false);
         inRangeValuesLine.setPointRadius(pointSize);
         inRangeValuesLine.setHasPoints(true);
@@ -144,6 +197,37 @@ public class BgGraphBuilder {
         line.setPointRadius(1);
         line.setHasPoints(true);
         return line;
+    }
+
+    // Produce an array of cubic lines, split as needed
+    public ArrayList<Line> filteredLines() {
+        ArrayList<Line> line_array = new ArrayList<Line>();
+        float last_x_pos = -999999; // bogus mark value
+        final float jump_threshold = 15; // in minutes
+        List<PointValue> local_points = new ArrayList<PointValue>();
+
+        if (filteredValues.size() > 0) {
+            final float end_marker = filteredValues.get(filteredValues.size() - 1).getX();
+
+            for (PointValue current_point : filteredValues) {
+                // a jump too far for a line? make it a new one
+                if (((last_x_pos != -999999) && (Math.abs(current_point.getX() - last_x_pos) > jump_threshold))
+                        || current_point.getX() == end_marker) {
+                    Line line = new Line(local_points);
+                    line.setHasPoints(true);
+                    line.setPointRadius(2);
+                    line.setStrokeWidth(1);
+                    line.setColor(Color.parseColor("#a0a0a0"));
+                    line.setCubic(true);
+                    line.setHasLines(true);
+                    line_array.add(line);
+                    local_points = new ArrayList<PointValue>();
+                }
+                last_x_pos = current_point.getX();
+                local_points.add(current_point); // grow current line list
+            }
+        }
+        return line_array;
     }
 
     public Line[] calibrationValuesLine() {
@@ -163,54 +247,74 @@ public class BgGraphBuilder {
 
 
     private void addBgReadingValues() {
+        final boolean show_filtered = prefs.getBoolean("show_filtered_curve", false);
+
         for (BgReading bgReading : bgReadings) {
             if (bgReading.raw_calculated != 0 && prefs.getBoolean("interpret_raw", false)) {
-                rawInterpretedValues.add(new PointValue((float) (bgReading.timestamp/ FUZZER), (float) unitized(bgReading.raw_calculated)));
+                rawInterpretedValues.add(new PointValueExtended((float) (bgReading.timestamp / FUZZER), (float) unitized(bgReading.raw_calculated),(float) unitized(bgReading.filtered_calculated_value)));
             } else if (bgReading.calculated_value >= 400) {
-                highValues.add(new PointValue((float) (bgReading.timestamp/ FUZZER), (float) unitized(400)));
+                highValues.add(new PointValueExtended((float) (bgReading.timestamp / FUZZER), (float) unitized(400),(float) unitized(bgReading.filtered_calculated_value)));
             } else if (unitized(bgReading.calculated_value) >= highMark) {
-                highValues.add(new PointValue((float) (bgReading.timestamp/ FUZZER), (float) unitized(bgReading.calculated_value)));
+                highValues.add(new PointValueExtended((float) (bgReading.timestamp / FUZZER), (float) unitized(bgReading.calculated_value), (float) unitized(bgReading.filtered_calculated_value)));
             } else if (unitized(bgReading.calculated_value) >= lowMark) {
-                inRangeValues.add(new PointValue((float) (bgReading.timestamp/ FUZZER), (float) unitized(bgReading.calculated_value)));
+                inRangeValues.add(new PointValueExtended((float) (bgReading.timestamp / FUZZER), (float) unitized(bgReading.calculated_value), (float) unitized(bgReading.filtered_calculated_value)));
             } else if (bgReading.calculated_value >= 40) {
-                lowValues.add(new PointValue((float)(bgReading.timestamp/ FUZZER), (float) unitized(bgReading.calculated_value)));
+                lowValues.add(new PointValueExtended((float) (bgReading.timestamp / FUZZER), (float) unitized(bgReading.calculated_value),(float) unitized(bgReading.filtered_calculated_value)));
             } else if (bgReading.calculated_value > 13) {
-                lowValues.add(new PointValue((float)(bgReading.timestamp/ FUZZER), (float) unitized(40)));
+                lowValues.add(new PointValueExtended((float) (bgReading.timestamp / FUZZER), (float) unitized(40), (float) unitized(bgReading.filtered_calculated_value)));
+            }
+
+            if ((show_filtered) && (bgReading.filtered_calculated_value > 0) && (bgReading.filtered_calculated_value != bgReading.calculated_value)) {
+                filteredValues.add(new PointValueExtended((float) ((bgReading.timestamp - timeshift) / FUZZER), (float) unitized(bgReading.filtered_calculated_value)));
             }
         }
         for (Calibration calibration : calibrations) {
-            calibrationValues.add(new PointValue((float)(calibration.timestamp/ FUZZER), (float) unitized(calibration.bg)));
+            calibrationValues.add(new PointValueExtended((float) (calibration.timestamp / FUZZER), (float) unitized(calibration.bg)));
         }
     }
 
-    public Line highLine() {
+    public Line highLine(){ return highLine(LINE_VISIBLE);}
+
+    public Line highLine(boolean show) {
         List<PointValue> highLineValues = new ArrayList<PointValue>();
-        highLineValues.add(new PointValue((float) start_time, (float) highMark));
-        highLineValues.add(new PointValue((float) end_time, (float) highMark));
+        highLineValues.add(new PointValue((float) start_time / FUZZER, (float) highMark));
+        highLineValues.add(new PointValue((float) end_time / FUZZER, (float) highMark));
         Line highLine = new Line(highLineValues);
         highLine.setHasPoints(false);
         highLine.setStrokeWidth(1);
-        highLine.setColor(ChartUtils.COLOR_ORANGE);
+        if(show) {
+            highLine.setColor(Color.parseColor("#FFFF00"));
+        } else {
+            highLine.setColor(Color.TRANSPARENT);
+        }
         return highLine;
     }
 
-    public Line lowLine() {
+    public Line lowLine(){ return lowLine(LINE_VISIBLE, FILL_UNDER_LINE);}
+
+    public Line lowLine(boolean show, boolean line_only) {
         List<PointValue> lowLineValues = new ArrayList<PointValue>();
-        lowLineValues.add(new PointValue((float)start_time, (float)lowMark));
-        lowLineValues.add(new PointValue((float)end_time, (float)lowMark));
+        lowLineValues.add(new PointValue((float)start_time / FUZZER, (float)lowMark));
+        lowLineValues.add(new PointValue((float) end_time / FUZZER, (float) lowMark));
         Line lowLine = new Line(lowLineValues);
         lowLine.setHasPoints(false);
-        lowLine.setAreaTransparency(50);
-        lowLine.setColor(Color.parseColor("#C30909"));
+        if(!line_only) {
+            lowLine.setAreaTransparency(20);
+            lowLine.setFilled(true);
+        }
         lowLine.setStrokeWidth(1);
-        lowLine.setFilled(true);
+        if(show){
+            lowLine.setColor(Color.parseColor("#C30909"));
+        } else {
+            lowLine.setColor(Color.TRANSPARENT);
+        }
         return lowLine;
     }
 
     public Line maxShowLine() {
         List<PointValue> maxShowValues = new ArrayList<PointValue>();
-        maxShowValues.add(new PointValue((float) start_time, (float) defaultMaxY));
-        maxShowValues.add(new PointValue((float) end_time, (float) defaultMaxY));
+        maxShowValues.add(new PointValue((float) start_time / FUZZER, (float) defaultMaxY));
+        maxShowValues.add(new PointValue((float) end_time / FUZZER, (float) defaultMaxY));
         Line maxShowLine = new Line(maxShowValues);
         maxShowLine.setHasLines(false);
         maxShowLine.setHasPoints(false);
@@ -219,8 +323,8 @@ public class BgGraphBuilder {
 
     public Line minShowLine() {
         List<PointValue> minShowValues = new ArrayList<PointValue>();
-        minShowValues.add(new PointValue((float) start_time, (float) defaultMinY));
-        minShowValues.add(new PointValue((float) end_time, (float) defaultMinY));
+        minShowValues.add(new PointValue((float) start_time / FUZZER, (float) defaultMinY));
+        minShowValues.add(new PointValue((float) end_time / FUZZER, (float) defaultMinY));
         Line minShowLine = new Line(minShowValues);
         minShowLine.setHasPoints(false);
         minShowLine.setHasLines(false);
@@ -248,30 +352,8 @@ public class BgGraphBuilder {
         return yAxis;
     }
 
-    public Axis xAxis() {
-        Axis xAxis = new Axis();
-        xAxis.setAutoGenerated(false);
-        List<AxisValue> xAxisValues = new ArrayList<AxisValue>();
-        GregorianCalendar now = new GregorianCalendar();
-        GregorianCalendar today = new GregorianCalendar(now.get(Calendar.YEAR), now.get(Calendar.MONTH), now.get(Calendar.DAY_OF_MONTH));
-        final java.text.DateFormat timeFormat = hourFormat();
-        timeFormat.setTimeZone(TimeZone.getDefault());
-        double start_hour_block = today.getTime().getTime();
-        double timeNow = new Date().getTime();
-        for(int l=0; l<=24; l++) {
-            if ((start_hour_block + (60000 * 60 * (l))) <  timeNow) {
-                if((start_hour_block + (60000 * 60 * (l + 1))) >=  timeNow) {
-                    endHour = start_hour_block + (60000 * 60 * (l));
-                    l=25;
-                }
-            }
-        }
-        for(int l=0; l<=24; l++) {
-            double timestamp = (endHour - (60000 * 60 * l));
-            xAxisValues.add(new AxisValue((long)(timestamp/ FUZZER), (timeFormat.format(timestamp)).toCharArray()));
-        }
-        xAxis.setValues(xAxisValues);
-        xAxis.setHasLines(true);
+    public Axis chartXAxis() {
+        Axis xAxis = xAxis();
         xAxis.setTextSize(axisTextSize);
         return xAxis;
     }
@@ -280,23 +362,41 @@ public class BgGraphBuilder {
         return new SimpleDateFormat(DateFormat.is24HourFormat(context) ? "HH" : "h a");
     }
 
+    // Please note, an xLarge table is also large, but a small one is only small.
     static public boolean isXLargeTablet(Context context) {
         return (context.getResources().getConfiguration().screenLayout & Configuration.SCREENLAYOUT_SIZE_MASK) >= Configuration.SCREENLAYOUT_SIZE_XLARGE;
     }
+    static public boolean isLargeTablet(Context context) {
+        return (context.getResources().getConfiguration().screenLayout & Configuration.SCREENLAYOUT_SIZE_MASK) >= Configuration.SCREENLAYOUT_SIZE_LARGE;
+    }
 
     public Axis previewXAxis(){
-        List<AxisValue> previewXaxisValues = new ArrayList<AxisValue>();
-        final java.text.DateFormat timeFormat = hourFormat();
-        timeFormat.setTimeZone(TimeZone.getDefault());
-        for(int l=0; l<=24; l+=hoursPreviewStep) {
-            double timestamp = (endHour - (60000 * 60 * l));
-            previewXaxisValues.add(new AxisValue((long)(timestamp/ FUZZER), (timeFormat.format(timestamp)).toCharArray()));
-        }
-        Axis previewXaxis = new Axis();
-        previewXaxis.setValues(previewXaxisValues);
-        previewXaxis.setHasLines(true);
+        Axis previewXaxis = xAxis();
         previewXaxis.setTextSize(previewAxisTextSize);
         return previewXaxis;
+    }
+
+    @NonNull
+    private Axis xAxis() {
+        List<AxisValue> axisValues = new ArrayList<AxisValue>();
+        final java.text.DateFormat timeFormat = hourFormat();
+        timeFormat.setTimeZone(TimeZone.getDefault());
+        GregorianCalendar calendar = new GregorianCalendar();
+        calendar.setTimeInMillis(start_time);
+        calendar.set(Calendar.MINUTE, 0);
+        calendar.set(Calendar.SECOND, 0);
+        calendar.set(Calendar.MILLISECOND, 0);
+        if (calendar.getTimeInMillis()<start_time){
+            calendar.add(Calendar.HOUR, 1);
+        }
+        while (calendar.getTimeInMillis()<end_time){
+            axisValues.add(new AxisValue((calendar.getTimeInMillis() / FUZZER), (timeFormat.format(calendar.getTimeInMillis())).toCharArray()));
+            calendar.add(Calendar.HOUR, 1);
+        }
+        Axis axis = new Axis();
+        axis.setValues(axisValues);
+        axis.setHasLines(true);
+        return axis;
     }
 
     /////////VIEWPORT RELATED//////////////
@@ -359,7 +459,7 @@ public class BgGraphBuilder {
     public String unitizedDeltaString(boolean showUnit, boolean highGranularity) {
 
         List<BgReading> last2 = BgReading.latest(2);
-        if(last2.size() < 2 || last2.get(0).timestamp - last2.get(1).timestamp > 20 * 60 * 1000){
+        if(last2.size() < 2 || last2.get(0).timestamp - last2.get(1).timestamp > MAX_SLOPE_MINUTES * 60 * 1000){
             // don't show delta if there are not enough values or the values are more than 20 mintes apart
             return "???";
         }
@@ -422,13 +522,23 @@ public class BgGraphBuilder {
 
         @Override
         public synchronized void onValueSelected(int i, int i1, PointValue pointValue) {
+        	
+        	String filtered = "";
+        	try {
+        		PointValueExtended pve = (PointValueExtended) pointValue;
+        		if(pve.calculatedFilteredValue != -1) {
+        			filtered = " (" + Math.round(pve.calculatedFilteredValue*10) / 10d +")";
+        		}
+        	} catch (ClassCastException e) {
+        		Log.e(TAG, "Error casting a point from pointValue to PointValueExtended", e);
+        	}
             final java.text.DateFormat timeFormat = DateFormat.getTimeFormat(context);
             //Won't give the exact time of the reading but the time on the grid: close enough.
             Long time = ((long)pointValue.getX())*FUZZER;
             if(tooltip!= null){
                 tooltip.cancel();
             }
-            tooltip = Toast.makeText(context, timeFormat.format(time)+ ": " + Math.round(pointValue.getY()*10)/ 10d , Toast.LENGTH_LONG);
+            tooltip = Toast.makeText(context, timeFormat.format(time)+ ": " + Math.round(pointValue.getY()*10)/ 10d + filtered, Toast.LENGTH_LONG);
             tooltip.show();
         }
 

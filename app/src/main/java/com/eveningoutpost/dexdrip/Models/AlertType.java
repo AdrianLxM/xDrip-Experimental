@@ -6,6 +6,7 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.preference.PreferenceManager;
 import android.provider.BaseColumns;
+
 import com.eveningoutpost.dexdrip.Models.UserError.Log;
 import com.activeandroid.Model;
 import com.activeandroid.annotation.Column;
@@ -19,6 +20,12 @@ import java.util.Calendar;
 import java.util.Date;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
+
+import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
+import com.google.gson.annotations.Expose;
+import com.google.gson.internal.bind.DateTypeAdapter;
 
 /**
  * Created by stephenblack on 1/14/15.
@@ -26,59 +33,77 @@ import java.util.UUID;
 @Table(name = "AlertType", id = BaseColumns._ID)
 public class AlertType extends Model {
 
+    @Expose
     @Column(name = "name")
     public String name;
 
+    @Expose
     @Column(name = "active")
     public boolean active;
 
+    @Expose
     @Column(name = "volume")
     public int volume;
 
+    @Expose
     @Column(name = "vibrate")
     public boolean vibrate;
 
+    @Expose
     @Column(name = "light")
     public boolean light;
 
+    @Expose
     @Column(name = "override_silent_mode")
     public boolean override_silent_mode;
 
+    @Expose
     @Column(name = "predictive")
     public boolean predictive;
 
+    @Expose
     @Column(name = "time_until_threshold_crossed")
     public double time_until_threshold_crossed;
 
     // If it is not above, then it must be below.
+    @Expose
     @Column(name = "above")
     public boolean above;
 
+    @Expose
     @Column(name = "threshold")
     public double threshold;
 
+    @Expose
     @Column(name = "all_day")
     public boolean all_day;
 
+    @Expose
     @Column(name = "start_time_minutes")
     public int start_time_minutes;  // This have probable be in minutes from start of day. this is not time...
 
+    @Expose
     @Column(name = "end_time_minutes")
     public int end_time_minutes;
 
+    @Expose
     @Column(name = "minutes_between") //??? what is the difference between minutes_between and default_snooze ???
     public int minutes_between; // The idea here was if ignored it will go off again each x minutes, snooze would be if it was aknowledged and dismissed it will go off again in y minutes
     // that said, Im okay with doing away with the minutes between and just doing it at a set 5 mins like dex
 
+    @Expose
     @Column(name = "default_snooze")
     public int default_snooze;
 
+    @Expose
     @Column(name = "text") // ??? what's that? is it different from name?
     public String text; // I figured if we wanted some special text, Its
 
+    @Expose
     @Column(name = "mp3_file")
     public String mp3_file;
 
+    @Expose
     @Column(name = "uuid", index = true)
     public String uuid;
 
@@ -99,7 +124,7 @@ public class AlertType extends Model {
      * In the case of "unclear state" for more than predefined time, return the "55" alert
      * In case that alerts are turned off, only return the 55.
      */
-    public static AlertType get_highest_active_alert(Context context, double bg) {
+    public static AlertType get_highest_active_alert(Context context, double bg, AtomicBoolean unclearReading) {
         SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(context);
         if(prefs.getLong("alerts_disabled_until", 0) > new Date().getTime()){
             Log.d("NOTIFICATIONS", "Notifications are currently disabled!!");
@@ -118,6 +143,7 @@ public class AlertType extends Model {
         AlertType at;
         if (UnclearTime >= UnclearTimeSetting && bg_unclear_readings_alerts ) {
             Log.d("NOTIFICATIONS", "Readings have been unclear for too long!!");
+            unclearReading.set(true);
             Notifications.bgUnclearAlert(context);
         }
         if ((UnclearTime > 0 ) && bg_unclear_readings_alerts) {
@@ -237,7 +263,8 @@ public class AlertType extends Model {
             int end_time_minutes,
             boolean override_silent_mode,
             int snooze,
-            boolean vibrate) {
+            boolean vibrate,
+            boolean active) {
         AlertType at = new AlertType();
         at.name = name;
         at.above = above;
@@ -245,7 +272,7 @@ public class AlertType extends Model {
         at.all_day = all_day;
         at.minutes_between = minutes_between;
         at.uuid = uuid != null? uuid : UUID.randomUUID().toString();
-        at.active = true;
+        at.active = active;
         at.mp3_file = mp3_file;
         at.start_time_minutes = start_time_minutes;
         at.end_time_minutes = end_time_minutes;
@@ -267,21 +294,17 @@ public class AlertType extends Model {
             int end_time_minutes,
             boolean override_silent_mode,
             int snooze,
-            boolean vibrate) {
+            boolean vibrate,
+            boolean active) {
 
-        if(uuid.equals(LOW_ALERT_55)) {
-            // This alert can not be removed/updated
-            return;
-        }
-
-        AlertType at = get_alert(uuid);
+         AlertType at = get_alert(uuid);
         at.name = name;
         at.above = above;
         at.threshold = threshold;
         at.all_day = all_day;
         at.minutes_between = minutes_between;
         at.uuid = uuid;
-        at.active = true;
+        at.active = active;
         at.mp3_file = mp3_file;
         at.start_time_minutes = start_time_minutes;
         at.end_time_minutes = end_time_minutes;
@@ -341,41 +364,52 @@ public class AlertType extends Model {
         return alerts;
     }
 
-
+    public static boolean activeLowAlertExists() {
+        List<AlertType> alerts = getAll(false);
+        if(alerts == null) {
+            return false;
+        }
+        for (AlertType alert : alerts) {
+            if(alert.active) {
+                return true;
+            }
+        }
+        return false;
+    }
 
     // This function is used to make sure that we always have a static alert on 55 low.
     // This alert will not be editable/removable.
     public static void CreateStaticAlerts() {
         if(get_alert(LOW_ALERT_55) == null) {
-            add_alert(LOW_ALERT_55, "low alert (unchangable)", false, 55, true, 1, null, 0, 0, true, 20, true);
+            add_alert(LOW_ALERT_55, "low alert (unchangable)", false, 55, true, 1, null, 0, 0, true, 20, true, true);
         }
     }
 
 
     public static void testAll(Context context) {
-
+        AtomicBoolean unclearReading = new AtomicBoolean(false);
         remove_all();
-        add_alert(null, "high alert 1", true, 180, true, 10, null, 0, 0, true, 20, true);
-        add_alert(null, "high alert 2", true, 200, true, 10, null, 0, 0, true, 20, true);
-        add_alert(null, "high alert 3", true, 220, true, 10, null, 0, 0, true, 20, true);
+        add_alert(null, "high alert 1", true, 180, true, 10, null, 0, 0, true, 20, true, true);
+        add_alert(null, "high alert 2", true, 200, true, 10, null, 0, 0, true, 20, true, true);
+        add_alert(null, "high alert 3", true, 220, true, 10, null, 0, 0, true, 20, true, true);
         print_all();
-        AlertType a1 = get_highest_active_alert(context, 190);
+        AlertType a1 = get_highest_active_alert(context, 190, unclearReading);
         Log.d(TAG, "a1 = " + a1.toString());
-        AlertType a2 = get_highest_active_alert(context, 210);
+        AlertType a2 = get_highest_active_alert(context, 210, unclearReading);
         Log.d(TAG, "a2 = " + a2.toString());
 
 
         AlertType a3 = get_alert(a1.uuid);
         Log.d(TAG, "a1 == a3 ? need to see true " + (a1==a3) + a1 + " " + a3);
 
-        add_alert(null, "low alert 1", false, 80, true, 10, null, 0, 0, true, 20, true);
-        add_alert(null, "low alert 2", false, 60, true, 10, null, 0, 0, true, 20, true);
+        add_alert(null, "low alert 1", false, 80, true, 10, null, 0, 0, true, 20, true, true);
+        add_alert(null, "low alert 2", false, 60, true, 10, null, 0, 0, true, 20, true, true);
 
-        AlertType al1 = get_highest_active_alert(context, 90);
+        AlertType al1 = get_highest_active_alert(context, 90, unclearReading);
         Log.d(TAG, "al1 should be null  " + al1);
-        al1 = get_highest_active_alert(context, 80);
+        al1 = get_highest_active_alert(context, 80, unclearReading);
         Log.d(TAG, "al1 = " + al1.toString());
-        AlertType al2 = get_highest_active_alert(context, 50);
+        AlertType al2 = get_highest_active_alert(context, 50, unclearReading);
         Log.d(TAG, "al2 = " + al2.toString());
 
         Log.d(TAG, "HigherAlert(a1, a2) = a1?" +  (HigherAlert(a1,a2) == a2));
@@ -390,20 +424,24 @@ public class AlertType extends Model {
 
 
     private boolean in_time_frame() {
-        if (all_day) {
+        return s_in_time_frame(all_day, start_time_minutes, end_time_minutes);
+    }
+    
+    static public boolean  s_in_time_frame(boolean s_all_day, int s_start_time_minutes, int s_end_time_minutes) {
+        if (s_all_day) {
             //Log.e(TAG, "in_time_frame returning true " );
             return true;
         }
         // time_now is the number of minutes that have passed from the start of the day.
         Calendar rightNow = Calendar.getInstance();
         int time_now = toTime(rightNow.get(Calendar.HOUR_OF_DAY), rightNow.get(Calendar.MINUTE));
-        Log.d(TAG, "time_now is " + time_now + " minutes" + " start_time " + start_time_minutes + " end_time " + end_time_minutes);
-        if(start_time_minutes < end_time_minutes) {
-            if (time_now >= start_time_minutes && time_now <= end_time_minutes) {
+        Log.d(TAG, "time_now is " + time_now + " minutes" + " start_time " + s_start_time_minutes + " end_time " + s_end_time_minutes);
+        if(s_start_time_minutes < s_end_time_minutes) {
+            if (time_now >= s_start_time_minutes && time_now <= s_end_time_minutes) {
                 return true;
             }
         } else {
-            if (time_now >= start_time_minutes || time_now <= end_time_minutes) {
+            if (time_now >= s_start_time_minutes || time_now <= s_end_time_minutes) {
                 return true;
             }
         }
@@ -500,4 +538,65 @@ public class AlertType extends Model {
     public static int toTime(int hours, int minutes) {
         return hours * 60 + minutes;
     }
+    
+    // Convert all settings to a string and save it in the references. This is needed to allow it's backup. 
+    public static boolean toSettings(Context context) {
+        SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(context);
+        List<AlertType> alerts  = new Select()
+            .from(AlertType.class)
+            .execute();
+
+        Gson gson = new GsonBuilder()
+                .excludeFieldsWithoutExposeAnnotation()
+                .registerTypeAdapter(Date.class, new DateTypeAdapter())
+                .serializeSpecialFloatingPointValues()
+                .create();
+        String output =  gson.toJson(alerts);
+        Log.e(TAG, "Created the string " + output);
+        prefs.edit().putString("saved_alerts", output).commit();
+
+        return true;
+
+    }
+    
+    
+    // Read all alerts from preference key and write them to db.
+    public static boolean fromSettings(Context context) {
+        SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(context);
+        String savedAlerts = prefs.getString("saved_alerts", "");
+        if(savedAlerts.isEmpty()) {
+            Log.i(TAG, "read saved_alerts string and it is empty");
+            return true;
+        }
+        Log.i(TAG, "read alerts string " + savedAlerts);
+
+     // Now delete all existing alerts
+        List<AlertType> alerts  = new Select()
+        .from(AlertType.class)
+        .execute();
+        for(AlertType alert : alerts) {
+            alert.delete();
+        }
+        
+        Gson gson = new GsonBuilder()
+            .excludeFieldsWithoutExposeAnnotation()
+             .create();
+        
+        AlertType[] newAlerts = gson.fromJson(savedAlerts, AlertType[].class);
+        if (newAlerts == null) {
+            Log.e(TAG, "newAlerts is null");
+            return true;
+        }
+        
+        Log.e(TAG, "read successfuly " + newAlerts.length);
+        for(AlertType alert : newAlerts) {
+            Log.e(TAG, "Saving alert " + alert.name);
+            alert.save();
+        }
+        // Delete the string, so next time we will not load the data
+        prefs.edit().putString("saved_alerts", "").commit();
+        return true;
+
+    }
+    
 }

@@ -40,7 +40,7 @@ import com.eveningoutpost.dexdrip.Models.UserError.Log;
 import com.eveningoutpost.dexdrip.Models.ActiveBluetoothDevice;
 import com.eveningoutpost.dexdrip.Models.BgReading;
 import com.eveningoutpost.dexdrip.Models.TransmitterData;
-import com.eveningoutpost.dexdrip.Sensor;
+import com.eveningoutpost.dexdrip.Models.Sensor;
 import com.eveningoutpost.dexdrip.UtilityModels.CollectionServiceStarter;
 import com.eveningoutpost.dexdrip.UtilityModels.ForegroundServiceStarter;
 import com.eveningoutpost.dexdrip.UtilityModels.HM10Attributes;
@@ -91,6 +91,10 @@ public class DexCollectionService extends Service {
         prefs = PreferenceManager.getDefaultSharedPreferences(getApplicationContext());
         listenForChangeInSettings();
         bgToSpeech = BgToSpeech.setupTTS(mContext); //keep reference to not being garbage collected
+        if(CollectionServiceStarter.isDexbridgeWixelorWifiandDexbridgeWixel(getApplicationContext())){
+            Log.i(TAG,"onCreate: resetting bridge_battery preference to 0");
+            prefs.edit().putInt("bridge_battery",0).apply();
+        }
         Log.i(TAG, "onCreate: STARTING SERVICE");
     }
 
@@ -100,9 +104,8 @@ public class DexCollectionService extends Service {
             stopSelf();
             return START_NOT_STICKY;
         }
-        if (CollectionServiceStarter.isBTWixel(getApplicationContext())
-                || CollectionServiceStarter.isDexbridgeWixel(getApplicationContext())
-                || CollectionServiceStarter.isWifiandBTWixel(getApplicationContext())) {
+        if (CollectionServiceStarter.isBteWixelorWifiandBtWixel(getApplicationContext())
+                || CollectionServiceStarter.isDexbridgeWixelorWifiandDexbridgeWixel(getApplicationContext())) {
             setFailoverTimer();
         } else {
             stopSelf();
@@ -150,11 +153,10 @@ public class DexCollectionService extends Service {
     }
 
     public void setRetryTimer() {
-        if (CollectionServiceStarter.isBTWixel(getApplicationContext())
-                || CollectionServiceStarter.isDexbridgeWixel(getApplicationContext())
-                || CollectionServiceStarter.isWifiandBTWixel(getApplicationContext())) {
+        if (CollectionServiceStarter.isBteWixelorWifiandBtWixel(getApplicationContext())
+                || CollectionServiceStarter.isDexbridgeWixelorWifiandDexbridgeWixel(getApplicationContext())) {
             long retry_in;
-            if(CollectionServiceStarter.isDexbridgeWixel(getApplicationContext())) {
+            if(CollectionServiceStarter.isDexbridgeWixelorWifiandDexbridgeWixel(getApplicationContext())) {
                 retry_in = (1000 * 25);
             }else {
                 retry_in = (1000*65);
@@ -174,9 +176,8 @@ public class DexCollectionService extends Service {
     }
 
     public void setFailoverTimer() {
-        if (CollectionServiceStarter.isBTWixel(getApplicationContext())
-                || CollectionServiceStarter.isDexbridgeWixel(getApplicationContext())
-                || CollectionServiceStarter.isWifiandBTWixel(getApplicationContext())) {
+        if (CollectionServiceStarter.isBteWixelorWifiandBtWixel(getApplicationContext())
+                || CollectionServiceStarter.isDexbridgeWixelorWifiandDexbridgeWixel(getApplicationContext())) {
 
             long retry_in = (1000 * 60 * 6);
             Log.d(TAG, "setFailoverTimer: Fallover Restarting in: " + (retry_in / (60 * 1000)) + " minutes");
@@ -429,7 +430,7 @@ public class DexCollectionService extends Service {
 
     public void setSerialDataToTransmitterRawData(byte[] buffer, int len) {
         long timestamp = new Date().getTime();
-        if (CollectionServiceStarter.isDexbridgeWixel(getApplicationContext())) {
+        if (CollectionServiceStarter.isDexbridgeWixelorWifiandDexbridgeWixel(getApplicationContext())) {
             Log.i(TAG, "setSerialDataToTransmitterRawData: Dealing with Dexbridge packet!");
             int DexSrc;
             int TransmitterID;
@@ -507,9 +508,7 @@ public class DexCollectionService extends Service {
             return;
         }
 
-        sensor.latest_battery_level = (sensor.latest_battery_level!=0)?Math.min(sensor.latest_battery_level, transmitterData.sensor_battery_level):transmitterData.sensor_battery_level;
-        sensor.save();
-
+        Sensor.updateBatteryLevel(sensor, transmitterData.sensor_battery_level);
         BgReading.create(transmitterData.raw_data, transmitterData.filtered_data, this, timestamp);
     }
 }

@@ -7,6 +7,8 @@ import android.preference.PreferenceManager;
 
 import com.eveningoutpost.dexdrip.Models.BgReading;
 import com.eveningoutpost.dexdrip.Models.Calibration;
+import com.eveningoutpost.dexdrip.Models.Sensor;
+import com.eveningoutpost.dexdrip.Services.XDripViewer;
 import com.eveningoutpost.dexdrip.Tables.BgReadingTable;
 import com.eveningoutpost.dexdrip.Tables.CalibrationDataTable;
 import com.eveningoutpost.dexdrip.UtilityModels.CollectionServiceStarter;
@@ -32,6 +34,8 @@ public class NavDrawerBuilder {
 
     public NavDrawerBuilder(Context aContext) {
         context = aContext;
+        boolean xDripViewer = XDripViewer.isxDripViewerMode(aContext);
+        
         SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(context);
         boolean IUnderstand = prefs.getBoolean("I_understand", false);
         if (IUnderstand == false) {
@@ -54,37 +58,39 @@ public class NavDrawerBuilder {
             this.nav_drawer_intents.add(new Intent(context, CalibrationDataTable.class));
         }
 
-        if(is_active_sensor) {
-            if(!CollectionServiceStarter.isBTShare(context)) {
-                if (last_two_bgReadings.size() > 1) {
-                    if (last_two_calibrations.size() > 1) {
-                        if (bGreadings_in_last_30_mins.size() >= 2) {
-                            if (time_now - last_two_calibrations.get(0).timestamp < (1000 * 60 * 60)) { //Put steps in place to discourage over calibration
-                                this.nav_drawer_options.add(CalibrationOverride.menu_name);
-                                this.nav_drawer_intents.add(new Intent(context, CalibrationOverride.class));
+        if(!xDripViewer) {
+            if(is_active_sensor) {
+                if(!CollectionServiceStarter.isBTShare(context)) {
+                    if (last_two_bgReadings.size() > 1) {
+                        if (last_two_calibrations.size() > 1) {
+                            if (bGreadings_in_last_30_mins.size() >= 2) {
+                                if (time_now - last_two_calibrations.get(0).timestamp < (1000 * 60 * 60)) { //Put steps in place to discourage over calibration
+                                    this.nav_drawer_options.add(CalibrationOverride.menu_name);
+                                    this.nav_drawer_intents.add(new Intent(context, CalibrationOverride.class));
+                                } else {
+                                    this.nav_drawer_options.add(AddCalibration.menu_name);
+                                    this.nav_drawer_intents.add(new Intent(context, AddCalibration.class));
+                                }
                             } else {
-                                this.nav_drawer_options.add(AddCalibration.menu_name);
-                                this.nav_drawer_intents.add(new Intent(context, AddCalibration.class));
+                                this.nav_drawer_options.add("Cannot Calibrate right now");
+                                this.nav_drawer_intents.add(new Intent(context, Home.class));
                             }
                         } else {
-                            this.nav_drawer_options.add("Cannot Calibrate right now");
-                            this.nav_drawer_intents.add(new Intent(context, Home.class));
+                            this.nav_drawer_options.add(DoubleCalibrationActivity.menu_name);
+                            this.nav_drawer_intents.add(new Intent(context, DoubleCalibrationActivity.class));
                         }
-                    } else {
-                        this.nav_drawer_options.add(DoubleCalibrationActivity.menu_name);
-                        this.nav_drawer_intents.add(new Intent(context, DoubleCalibrationActivity.class));
                     }
                 }
+                this.nav_drawer_options.add(StopSensor.menu_name);
+                this.nav_drawer_intents.add(new Intent(context, StopSensor.class));
+            } else {
+                this.nav_drawer_options.add(StartNewSensor.menu_name);
+                this.nav_drawer_intents.add(new Intent(context, StartNewSensor.class));
             }
-            this.nav_drawer_options.add(StopSensor.menu_name);
-            this.nav_drawer_intents.add(new Intent(context, StopSensor.class));
-        } else {
-            this.nav_drawer_options.add(StartNewSensor.menu_name);
-            this.nav_drawer_intents.add(new Intent(context, StartNewSensor.class));
         }
 
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.JELLY_BEAN_MR2) {
-            if(CollectionServiceStarter.isBTWixel(context) || CollectionServiceStarter.isDexbridgeWixel(context)|| CollectionServiceStarter.isBTShare(context) ||CollectionServiceStarter.isWifiandBTWixel(context)) {
+            if(CollectionServiceStarter.isBteWixelorWifiandBtWixel(context) || CollectionServiceStarter.isDexbridgeWixelorWifiandDexbridgeWixel(context)|| CollectionServiceStarter.isBTShare(context) ) {
                 this.nav_drawer_options.add(BluetoothScan.menu_name);
                 this.nav_drawer_intents.add(new Intent(context, BluetoothScan.class));
             }
@@ -105,6 +111,9 @@ public class NavDrawerBuilder {
 
         this.nav_drawer_options.add(StatsActivity.MENU_NAME);
         this.nav_drawer_intents.add(new Intent(context, StatsActivity.class));
+
+        this.nav_drawer_options.add(BGHistory.menu_name);
+        this.nav_drawer_intents.add(new Intent(context, BGHistory.class));
 
         this.nav_drawer_options.add("Settings");
         this.nav_drawer_intents.add(new Intent(context, Preferences.class));

@@ -2,7 +2,9 @@ package com.eveningoutpost.dexdrip;
 
 import android.app.Activity;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.os.Bundle;
+import android.preference.PreferenceManager;
 import android.support.v4.widget.DrawerLayout;
 import android.text.TextUtils;
 import com.eveningoutpost.dexdrip.Models.UserError.Log;
@@ -14,7 +16,9 @@ import android.widget.EditText;
 import android.widget.Toast;
 
 import com.eveningoutpost.dexdrip.Models.Calibration;
+import com.eveningoutpost.dexdrip.Models.Sensor;
 import com.eveningoutpost.dexdrip.UtilityModels.CollectionServiceStarter;
+import com.eveningoutpost.dexdrip.UtilityModels.Constants;
 import com.eveningoutpost.dexdrip.utils.ActivityWithMenu;
 
 
@@ -50,15 +54,21 @@ public class CalibrationOverride extends ActivityWithMenu {
                     if (!TextUtils.isEmpty(string_value)){
                         double calValue = Double.parseDouble(string_value);
 
-                        Calibration last_calibration = Calibration.last();
-                        last_calibration.sensor_confidence = 0;
-                        last_calibration.slope_confidence = 0;
-                        last_calibration.save();
-                        Calibration.create(calValue, getApplicationContext());
+                        SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(CalibrationOverride.this);
+                        String unit = prefs.getString("units", "mgdl");
+                        double calValueMGDL = ("mgdl".equals(unit))?calValue:calValue* Constants.MMOLL_TO_MGDL;
 
-                         Intent tableIntent = new Intent(v.getContext(), Home.class);
-                         startActivity(tableIntent);
-                         finish();
+                        if(calValueMGDL >=40 && calValueMGDL <=400){
+                            Calibration.clearLastCalibration(getApplicationContext());
+                            Calibration.create(calValue, getApplicationContext());
+
+                            Intent tableIntent = new Intent(v.getContext(), Home.class);
+                            startActivity(tableIntent);
+                            finish();
+                        } else {
+                            value.setError("Out of range!");
+                        }
+
                     } else {
                         value.setError("Calibration Can Not be blank");
                     }

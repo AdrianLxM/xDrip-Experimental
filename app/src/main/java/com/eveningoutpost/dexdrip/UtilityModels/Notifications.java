@@ -22,8 +22,9 @@ import android.os.PowerManager;
 import android.preference.PreferenceManager;
 import android.support.v4.app.NotificationCompat;
 import android.support.v4.app.NotificationManagerCompat;
-import com.eveningoutpost.dexdrip.Models.UserError.Log;
 
+import com.eveningoutpost.dexdrip.Models.UserError.Log;
+import com.eveningoutpost.dexdrip.Models.Sensor;
 import com.eveningoutpost.dexdrip.AddCalibration;
 import com.eveningoutpost.dexdrip.DoubleCalibrationActivity;
 import com.eveningoutpost.dexdrip.EditAlertActivity;
@@ -35,13 +36,14 @@ import com.eveningoutpost.dexdrip.Models.Calibration;
 import com.eveningoutpost.dexdrip.Models.CalibrationRequest;
 import com.eveningoutpost.dexdrip.Models.UserNotification;
 import com.eveningoutpost.dexdrip.Services.MissedReadingService;
-
+import com.eveningoutpost.dexdrip.Services.SnoozeOnNotificationDismissService;
 import com.eveningoutpost.dexdrip.R;
-import com.eveningoutpost.dexdrip.Sensor;
 
+import java.text.SimpleDateFormat;
 import java.util.Calendar;
 import java.util.Date;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Created by stephenblack on 11/28/14.
@@ -64,6 +66,8 @@ public class Notifications extends IntentService {
     public static boolean smart_snoozing;
     public static boolean smart_alerting;
     private final static String TAG = AlertPlayer.class.getSimpleName();
+
+    private final static SimpleDateFormat dateFormat = new SimpleDateFormat("HH:mm");
 
     Context mContext;
     PendingIntent wakeIntent;
@@ -97,14 +101,18 @@ public class Notifications extends IntentService {
     protected void onHandleIntent(Intent intent) {
         PowerManager pm = (PowerManager) getApplicationContext().getSystemService(Context.POWER_SERVICE);
         PowerManager.WakeLock wl = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "NotificationsIntent");
+        AtomicBoolean unclearReading = new AtomicBoolean(false);
         wl.acquire();
-        Log.d("Notifications", "Running Notifications Intent Service");
-        Context context =getApplicationContext(); 
-        ReadPerfs(context);
-        notificationSetter(context);
-        ArmTimer(context);
-        context.startService(new Intent(context, MissedReadingService.class));
-        wl.release();
+        try {
+            Log.d("Notifications", "Running Notifications Intent Service");
+            Context context = getApplicationContext();
+            ReadPerfs(context);
+            notificationSetter(context, unclearReading);
+            ArmTimer(context, unclearReading.get());
+            context.startService(new Intent(context, MissedReadingService.class));
+        } finally {
+            if (wl.isHeld()) wl.release();
+        }
     }
 
     public void ReadPerfs(Context context) {
@@ -133,7 +141,7 @@ public class Notifications extends IntentService {
  */
 
 
-    private void FileBasedNotifications(Context context) {
+    private void FileBasedNotifications(Context context, AtomicBoolean unclearReading) {
         ReadPerfs(context);
         Sensor sensor = Sensor.currentSensor();
 
@@ -151,7 +159,7 @@ public class Notifications extends IntentService {
         // or the sensor was started, but the 2 hours did not still pass? or there is no calibrations.
         // In all this cases, bgReading.calculated_value should be 0.
         if (sensor != null && bgReading != null && bgReading.calculated_value != 0) {
-            AlertType newAlert = AlertType.get_highest_active_alert(context, bgReading.calculated_value);
+            AlertType newAlert = AlertType.get_highest_active_alert(context, bgReading.calculated_value, unclearReading);
 
             if (newAlert == null) {
                 Log.d(TAG, "FileBasedNotifications - No active notifcation exists, stopping all alerts");
@@ -205,15 +213,14 @@ public class Notifications extends IntentService {
                 // We should not do anything if we are snoozed for the 80...
                 // If one allert was high and the second one is low however, we alarm in any case (snoozing ignored).
                 boolean opositeDirection = AlertType.OpositeDirection(activeBgAlert, newAlert);
-                AlertType newHigherAlert = AlertType.HigherAlert(activeBgAlert, newAlert);
-                if ((newHigherAlert == activeBgAlert) && (!opositeDirection)) {
-                    // the existing alert is the higher, we should check if to play it
-                    Log.d(TAG, "FileBasedNotifications The existing alert has the same direcotion, checking if to playit newHigherAlert = " + newHigherAlert.name +
-                            "activeBgAlert = " + activeBgAlert.name);
-
-                    boolean trendingToAlertEnd = trendingToAlertEnd(context, false, newHigherAlert);
-                    AlertPlayer.getPlayer().ClockTick(context, trendingToAlertEnd, EditAlertActivity.unitsConvert2Disp(doMgdl, bgReading.calculated_value));
-                    return;
+                if(!opositeDirection) {
+                    AlertType newHigherAlert = AlertType.HigherAlert(activeBgAlert, newAlert);
+                    if ((newHigherAlert == activeBgAlert)) {
+                        // the existing (snoozed) alert is the higher, No need to play it since it is snoozed.
+                        Log.d(TAG, "FileBasedNotifications The new alert has the same direcotion, it is lower than the one snoozed, not playing it." +
+                              " newHigherAlert = " + newHigherAlert.name + "activeBgAlert = " + activeBgAlert.name);
+                        return;
+                    }
                 }
             }
             // For now, we are stopping the old alert and starting a new one.
@@ -241,17 +248,16 @@ public class Notifications extends IntentService {
  * *****************************************************************************************************************
  */
 
-    private void notificationSetter(Context context) {
+    private void notificationSetter(Context context, AtomicBoolean unclearReading) {
         ReadPerfs(context);
-        BgGraphBuilder bgGraphBuilder = new BgGraphBuilder(context);
         if (bg_ongoing && (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN)) {
-            bgOngoingNotification(bgGraphBuilder);
+            bgOngoingNotification();
         }
         if (prefs.getLong("alerts_disabled_until", 0) > new Date().getTime()) {
             Log.d("NOTIFICATIONS", "Notifications are currently disabled!!");
             return;
         }
-        FileBasedNotifications(context);
+        FileBasedNotifications(context, unclearReading);
         BgReading.checkForDropAllert(context);
         BgReading.checkForRisingAllert(context);
 
@@ -298,26 +304,69 @@ public class Notifications extends IntentService {
         }
     }
 
-    private long calcuatleArmTime(Context ctx, long now) {
+    // This is the absolute time, not time from now.
+    private long calcuatleArmTimeUnclearalert(Context ctx, long now, boolean unclearAlert) {
+        if (!unclearAlert) {
+            return Long.MAX_VALUE;
+        }
+        Long wakeTimeUnclear = Long.MAX_VALUE;
 
-      Long wakeTime = Long.MAX_VALUE; // This is the absalute time, not time from now.
-      ActiveBgAlert activeBgAlert = ActiveBgAlert.getOnly();
-      if (activeBgAlert != null) {
-          AlertType alert = AlertType.get_alert(activeBgAlert.alert_uuid);
-          if (alert != null) {
-              wakeTime = activeBgAlert.next_alert_at ;
-              Log.d(TAG , "ArmTimer waking at: "+ new Date(wakeTime) +" in " +  (wakeTime - now)/60000d + " minutes");
-              if (wakeTime < now + 60000) {
-                  // next alert should be at least one minute from now.
-                  wakeTime = now + 60000;
-                  Log.w(TAG , "setting next alert to 1 minute from now (no problem right now, but needs a fix someplace else)");
-              }
-              
-          }
-      } else {
-          // no active alert exists
-          wakeTime = now + 6 * 60000;
-      }
+        UserNotification userNotification = UserNotification.GetNotificationByType("bg_unclear_readings_alert");
+        if (userNotification == null) {
+            // An alert should have already being played, how is this NULL.
+        	Log.wtf(TAG, "No active alert exists.");
+            wakeTimeUnclear = now + MissedReadingService.getOtherAlertReraiseSec(ctx) * 1000;
+        } else {
+            // This alert is snoozed
+            // reminder - userNotification.timestamp is the time that the alert should be played again
+            wakeTimeUnclear = (long)userNotification.timestamp;
+        }
+        
+        if(wakeTimeUnclear < now ) {
+            // we should alert now,
+            wakeTimeUnclear = now;
+        }
+        if( wakeTimeUnclear == Long.MAX_VALUE) {
+            // Should not happen
+            Log.e(TAG ,"calcuatleArmTimeUnclearalert wakeTimeUnclear bad value setting it to one minute from now " + new Date(wakeTimeUnclear) + " in " +  ((wakeTimeUnclear - now)/60000d) + " minutes" );
+            return now + 60 * 1000;
+        }
+        Log.w(TAG ,"calcuatleArmTimeUnclearalert returning " + new Date(wakeTimeUnclear) + " in " +  ((wakeTimeUnclear - now)/60000d) + " minutes" );
+        return wakeTimeUnclear;
+    }
+    
+    // This is the absolute time, not time from now.
+    private long calcuatleArmTimeBg(long now) {
+        Long wakeTimeBg = Long.MAX_VALUE;
+        ActiveBgAlert activeBgAlert = ActiveBgAlert.getOnly();
+        if (activeBgAlert != null) {
+            AlertType alert = AlertType.get_alert(activeBgAlert.alert_uuid);
+            if (alert != null) {
+                wakeTimeBg = activeBgAlert.next_alert_at ;
+                Log.d(TAG , "ArmTimer BG alert -waking at: "+ new Date(wakeTimeBg) +" in " +  (wakeTimeBg - now)/60000d + " minutes");
+                if (wakeTimeBg < now) {
+                    // next alert should be at least one minute from now.
+                    wakeTimeBg = now + 60000;
+                    Log.w(TAG , "setting next alert to 1 minute from now (no problem right now, but needs a fix someplace else)");
+                }
+                
+            }
+        }
+        Log.d("Notifications" , "calcuatleArmTimeBg returning: "+ new Date(wakeTimeBg) +" in " +  (wakeTimeBg - now)/60000d + " minutes");
+        return wakeTimeBg;
+    }
+    
+    
+    
+ // This is the absolute time, not time from now.
+    private long calcuatleArmTime(Context ctx, long now, boolean unclearAlert) {
+        Long wakeTimeBg = calcuatleArmTimeBg(now);
+        Long wakeTimeUnclear = calcuatleArmTimeUnclearalert(ctx, now, unclearAlert);
+        Long wakeTime = Math.min(wakeTimeBg, wakeTimeUnclear);
+        
+        Log.d("Notifications" , "calcuatleArmTimeBg returning: "+ new Date(wakeTime) +" in " +  (wakeTime - now)/60000d + " minutes");
+        return wakeTime;
+
 /*
  * 
  *       leaving this code here since this is a code for a more correct calculation
@@ -341,22 +390,18 @@ public class Notifications extends IntentService {
 
       // check when the first alert should be fired. take care of that ???
   */    
-      Log.d("Notifications" , "calcuatleArmTime returning: "+ new Date(wakeTime) +" in " +  (wakeTime - now)/60000d + " minutes");
-      return wakeTime;
+      
     }
     
-    private void ArmTimer(Context ctx) {
+    private void ArmTimer(Context ctx, boolean unclearAlert) {
         Calendar calendar = Calendar.getInstance();
         final long now = calendar.getTimeInMillis();
         Log.d("Notifications", "ArmTimer called");
 
-        long wakeTime = calcuatleArmTime(ctx, now);
-        if(wakeTime == Long.MAX_VALUE) {
-          Log.d("Notifications" , "ArmTimer timer will not br armed");
-          return;
-        }
+        long wakeTime = calcuatleArmTime(ctx, now, unclearAlert);
+
         
-        if(wakeTime < now ) {
+        if(wakeTime < now || wakeTime == Long.MAX_VALUE) {
           Log.e("Notifications" , "ArmTimer recieved a negative time, will fire in 6 minutes");
           wakeTime = now + 6 * 60000;
         }
@@ -396,19 +441,13 @@ public class Notifications extends IntentService {
         return createWearBitmap(System.currentTimeMillis() - 60000 * 60 * hours, System.currentTimeMillis());
     }
 
-    private Notification createExtensionPage(long hours) {
-        return new NotificationCompat.Builder(mContext)
-                .extend(new NotificationCompat.WearableExtender()
-                                .setBackground(createWearBitmap(hours))
-                                .setHintShowBackgroundOnly(true)
-                                .setHintAvoidBackgroundClipping(true)
-                )
-                .build();
-    }
 
     @TargetApi(Build.VERSION_CODES.JELLY_BEAN)
-    public Notification createOngoingNotification(BgGraphBuilder bgGraphBuilder, Context context) {
+    public Notification createOngoingNotification(Context context) {
         mContext = context;
+        long end = System.currentTimeMillis() + (60000 * 5);
+        long start = end - (60000 * 60*3) -  (60000 * 10);
+        BgGraphBuilder bgGraphBuilder = new BgGraphBuilder(mContext, start, end);
         ReadPerfs(mContext);
         Intent intent = new Intent(mContext, Home.class);
         List<BgReading> lastReadings = BgReading.latest(2);
@@ -460,13 +499,13 @@ public class Notifications extends IntentService {
         return b.build();
     }
 
-    private void bgOngoingNotification(final BgGraphBuilder bgGraphBuilder) {
+    private void bgOngoingNotification() {
         mHandler.post(new Runnable() {
             @Override
             public void run() {
                 NotificationManagerCompat
                         .from(mContext)
-                        .notify(ongoingNotificationId, createOngoingNotification(bgGraphBuilder, mContext));
+                        .notify(ongoingNotificationId, createOngoingNotification(mContext));
                 if (iconBitmap != null)
                     iconBitmap.recycle();
                 if (notifiationBitmap != null)
@@ -534,9 +573,9 @@ public class Notifications extends IntentService {
         UserNotification userNotification = UserNotification.lastCalibrationAlert();
         if ((userNotification == null) || (userNotification.timestamp <= ((new Date().getTime()) - (60000 * calibration_snooze)))) {
             if (userNotification != null) { userNotification.delete(); }
-            UserNotification.create("12 hours since last Calibration", "calibration_alert");
+            UserNotification.create("12 hours since last Calibration", "calibration_alert", new Date().getTime());
             String title = "Calibration Needed";
-            String content = "12 hours since last calibration";
+            String content = dateFormat.format(new Date()) + ": 12 hours since last calibration";
             Intent intent = new Intent(mContext, AddCalibration.class);
             calibrationNotificationCreate(title, content, intent, calibrationNotificationId);
         }
@@ -546,9 +585,9 @@ public class Notifications extends IntentService {
         UserNotification userNotification = UserNotification.lastDoubleCalibrationAlert();
         if ((userNotification == null) || (userNotification.timestamp <= ((new Date().getTime()) - (60000 * calibration_snooze)))) {
             if (userNotification != null) { userNotification.delete(); }
-            UserNotification.create("Double Calibration", "double_calibration_alert");
+            UserNotification.create("Double Calibration", "double_calibration_alert", new Date().getTime());
             String title = "Sensor is ready";
-            String content = "Sensor is ready, please enter a double calibration";
+            String content = dateFormat.format(new Date()) + ": Sensor is ready, please enter a double calibration";
             Intent intent = new Intent(mContext, DoubleCalibrationActivity.class);
             calibrationNotificationCreate(title, content, intent, calibrationNotificationId);
         }
@@ -558,31 +597,31 @@ public class Notifications extends IntentService {
         UserNotification userNotification = UserNotification.lastExtraCalibrationAlert();
         if ((userNotification == null) || (userNotification.timestamp <= ((new Date().getTime()) - (60000 * calibration_snooze)))) {
             if (userNotification != null) { userNotification.delete(); }
-            UserNotification.create("Extra Calibration Requested", "extra_calibration_alert");
+            UserNotification.create("Extra Calibration Requested", "extra_calibration_alert", new Date().getTime());
             String title = "Calibration Needed";
-            String content = "A calibration entered now will GREATLY increase performance";
+            String content = dateFormat.format(new Date()) + ": A calibration entered now will GREATLY increase performance";
             Intent intent = new Intent(mContext, AddCalibration.class);
             calibrationNotificationCreate(title, content, intent, extraCalibrationNotificationId);
         }
     }
 
     public static void bgUnclearAlert(Context context) {
-        SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(context);
-        int otherAlertSnooze =  Integer.parseInt(prefs.getString("other_alerts_snooze", "20"));
-        OtherAlert(context, "bg_unclear_readings_alert", "Unclear Sensor Readings", uncleanAlertNotificationId,  otherAlertSnooze);
+        long otherAlertReraiseSec = MissedReadingService.getOtherAlertReraiseSec(context);
+        String message = dateFormat.format(new Date()) + ": Unclear Sensor Readings";
+        OtherAlert(context, "bg_unclear_readings_alert", message, uncleanAlertNotificationId,  otherAlertReraiseSec);
     }
 
     public static void bgMissedAlert(Context context) {
-        SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(context);
-        int otherAlertSnooze =  Integer.parseInt(prefs.getString("other_alerts_snooze", "20"));
-        OtherAlert(context, "bg_missed_alerts", "BG Readings Missed", missedAlertNotificationId, otherAlertSnooze);
+        long otherAlertReraiseSec = MissedReadingService.getOtherAlertReraiseSec(context);
+        String message = "BG Readings Missed (" + dateFormat.format(new Date()) + ")";
+        OtherAlert(context, "bg_missed_alerts", message, missedAlertNotificationId, otherAlertReraiseSec);
     }
 
     public static void RisingAlert(Context context, boolean on) {
-        RiseDropAlert(context, on, "bg_rise_alert", "bg rising fast", riseAlertNotificationId);
+        RiseDropAlert(context, on, "bg_rise_alert", "bg rising fast (" + dateFormat.format(new Date()) + ")", riseAlertNotificationId);
     }
     public static void DropAlert(Context context, boolean on) {
-        RiseDropAlert(context, on, "bg_fall_alert", "bg falling fast", failAlertNotificationId);
+        RiseDropAlert(context, on, "bg_fall_alert", "bg falling fast (" + dateFormat.format(new Date()) + ")", failAlertNotificationId);
     }
 
     public static void RiseDropAlert(Context context, boolean on, String type, String message, int notificatioId) {
@@ -596,25 +635,29 @@ public class Notifications extends IntentService {
         }
     }
 
-    private static void OtherAlert(Context context, String type, String message, int notificatioId, int snooze) {
+    private static void OtherAlert(Context context, String type, String message, int notificatioId, long reraiseSec) {
         SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(context);
         String otherAlertsSound = prefs.getString("other_alerts_sound", "content://settings/system/notification_sound");
         Boolean otherAlertsOverrideSilent = prefs.getBoolean("other_alerts_override_silent", false);
 
         Log.d(TAG,"OtherAlert called " + type + " " + message);
         UserNotification userNotification = UserNotification.GetNotificationByType(type); //"bg_unclear_readings_alert"
-        if ((userNotification == null) || (userNotification.timestamp <= ((new Date().getTime()) - (60000 * snooze)))) {
+        if ((userNotification == null) || userNotification.timestamp <= new Date().getTime() ) {
             if (userNotification != null) {
                 userNotification.delete();
             }
-            UserNotification.create(message, type);
+            UserNotification.create(message, type, new Date().getTime() + reraiseSec * 1000);
+
+            Intent deleteIntent = new Intent(context, SnoozeOnNotificationDismissService.class);
+            deleteIntent.putExtra("alertType", type);
             Intent intent = new Intent(context, Home.class);
             NotificationCompat.Builder mBuilder =
                     new NotificationCompat.Builder(context)
                             .setSmallIcon(R.drawable.ic_action_communication_invert_colors_on)
                             .setContentTitle(message)
                             .setContentText(message)
-                            .setContentIntent(PendingIntent.getActivity(context, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT));
+                            .setContentIntent(PendingIntent.getActivity(context, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT))
+                            .setDeleteIntent(PendingIntent.getService(context, 0, deleteIntent, PendingIntent.FLAG_UPDATE_CURRENT));
             mBuilder.setVibrate(vibratePattern);
             mBuilder.setLights(0xff00ff00, 300, 1000);
             if(otherAlertsOverrideSilent) {

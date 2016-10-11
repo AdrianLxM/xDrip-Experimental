@@ -51,12 +51,14 @@ public class WifiCollectionService extends Service {
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
+        Log.d(TAG, "onStartCommand called");
         if (android.os.Build.VERSION.SDK_INT < Build.VERSION_CODES.JELLY_BEAN_MR1) {
             stopSelf();
             return START_NOT_STICKY;
         }
         if (CollectionServiceStarter.isWifiWixel(getApplicationContext())
-                || CollectionServiceStarter.isWifiandBTWixel(getApplicationContext())) {
+                || CollectionServiceStarter.isWifiandBTWixel(getApplicationContext())
+                || CollectionServiceStarter.isWifiandDexbridgeWixel(getApplicationContext())) {
             runWixelReader();
             // For simplicity done here, would better happen once we know if we have a packet or not...
             setFailoverTimer();
@@ -95,17 +97,24 @@ public class WifiCollectionService extends Service {
 
 
     public void setFailoverTimer() {
+        Log.d(TAG, "setFailoverTimer called \n");
         if (CollectionServiceStarter.isWifiWixel(getApplicationContext())
-                || CollectionServiceStarter.isWifiandBTWixel(getApplicationContext())) {
+                || CollectionServiceStarter.isWifiandBTWixel(getApplicationContext())
+                || CollectionServiceStarter.isWifiandDexbridgeWixel(getApplicationContext())) {
             long retry_in = WixelReader.timeForNextRead();
-            Log.d(TAG, "setFailoverTimer: Fallover Restarting in: " + (retry_in / (60 * 1000)) + " minutes");
+            Log.e(TAG, "setFailoverTimer: Fallover Restarting in: " + (retry_in / (60 * 1000)) + " minutes");
             Calendar calendar = Calendar.getInstance();
             AlarmManager alarm = (AlarmManager) getSystemService(ALARM_SERVICE);
-            if (Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.KITKAT) {
-                alarm.setExact(alarm.RTC_WAKEUP, calendar.getTimeInMillis() + retry_in, PendingIntent.getService(this, 0, new Intent(this, WifiCollectionService.class), 0));
-            } else {
-                alarm.set(alarm.RTC_WAKEUP, calendar.getTimeInMillis() + retry_in, PendingIntent.getService(this, 0, new Intent(this, WifiCollectionService.class), 0));
-            }
+            
+            long wakeTime = calendar.getTimeInMillis() + retry_in;
+            PendingIntent serviceIntent = PendingIntent.getService(this, 0, new Intent(this, this.getClass()), 0);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                alarm.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, wakeTime, serviceIntent);
+            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
+                alarm.setExact(AlarmManager.RTC_WAKEUP, wakeTime, serviceIntent);
+            } else
+                alarm.set(AlarmManager.RTC_WAKEUP, wakeTime, serviceIntent);
+            
         } else {
             stopSelf();
         }
@@ -118,8 +127,14 @@ public class WifiCollectionService extends Service {
     private void runWixelReader() {
         // Theoretically can create more than one task. Should not be a problem since android runs them
         // on the same thread.
-        WixelReader task = new WixelReader(getApplicationContext());
-        // Assume here that task will execute, otheirwise we leak a wake lock...
+        Log.d(TAG, "runWixelReader called");
+        AsyncTaskBase task;
+        if(XDripViewer.isxDripViewerMode(getApplicationContext())) {
+            task = new XDripViewer(getApplicationContext());
+        } else {
+            task = new WixelReader(getApplicationContext());
+        }
+     // Assume here that task will execute, otheirwise we leak a wake lock...
         task.execute();
     }
 }

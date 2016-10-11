@@ -78,34 +78,52 @@ def generateVersionName = { ->
 android {
     compileSdkVersion 23
     buildToolsVersion "22.0.1"
-
     defaultConfig {
         applicationId "com.eveningoutpost.dexdrip"
         minSdkVersion 17
         targetSdkVersion 23
         versionCode 2
         versionName generateVersionName()
+        multiDexEnabled true
     }
-    buildTypes {
+
+    productFlavors {
+        xdrip {
+            applicationId = "com.eveningoutpost.dexdrip"
+            resValue "string", "content_provider", "com.example"
+            resValue "string", "app_name", "xDrip"
+            resValue "string", "target_package", "com.eveningoutpost.dexdrip"
+            resValue "string", "data_sync", "Data Sync"
+        }
+        xdripviewer {
+            applicationId = "com.eveningoutpost.dexdrip.viewer"
+            resValue "string", "content_provider", "com.example1"
+            resValue "string", "app_name", "xDripViewer"
+            resValue "string", "target_package", "com.eveningoutpost.dexdrip.viewer"
+            resValue "string", "data_sync", ""
+        }
     }
 }
 
 dependencies {
     compile fileTree(dir: 'libs', include: ['*.jar'])
-    wearApp project(':wear')
-    testCompile 'com.squareup.okhttp:mockwebserver:2.5.0'
+    xdripWearApp project(path: ':wear', configuration: 'xdripRelease')
+    xdripviewerWearApp project(path: ':wear', configuration: 'xdripviewerRelease')
+    testCompile 'com.squareup.okhttp:mockwebserver:2.6.0'
     compile 'com.nispok:snackbar:2.10.8'
     compile 'com.android.support:appcompat-v7:23.1.0'
-    compile 'com.squareup.okhttp:okhttp:2.5.0'
-    compile 'com.google.code.gson:gson:2.3'
+    compile 'com.squareup.okhttp:okhttp:2.6.0'
+    compile 'ar.com.hjg:pngj:2.1.0'
+    compile 'com.google.code.gson:gson:2.7'
     compile 'com.squareup.retrofit:converter-gson:2.0.0-beta2'
     compile 'com.squareup.retrofit:retrofit:2.0.0-beta2'
-    compile 'com.getpebble:pebblekit:3.0.0'
+    compile 'com.squareup.okhttp:logging-interceptor:2.6.0'
+    compile 'com.getpebble:pebblekit:3.1.0'
     compile 'io.reactivex:rxjava:1.0.0'
     compile 'com.github.lecho:hellocharts-android:v1.5.5'
     compile 'com.google.android.gms:play-services-wearable:7.5.0'
     compile 'com.google.guava:guava:18.0'
-
+    compile 'com.android.support:multidex:1.0.1'
     compile('com.github.nightscout:android-uploader:CORE_FOR_XDRIP') {
         transitive = false;
     }
@@ -118,7 +136,6 @@ dependencies {
     compile 'net.tribe7.seeds:seeds-primitives:16.0.1'
     compile 'org.slf4j:slf4j-api:1.7.7'
     /* end relevant android-uploader dependencies */
-
     compile('com.crashlytics.sdk.android:crashlytics:2.5.0@aar') {
         transitive = true;
     }
